@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  todolist:
+    build: .
+    container_name: todolist-app
+    ports:
+      - "3000:3000"
+    volumes:
+      # Persist SQLite database using named volume
+      - todolist-db:/app/src/lib
+      # Persist uploaded files using named volume
+      - todolist-uploads:/app/uploads
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    restart: unless-stopped
+    networks:
+      - todolist-network
+
+volumes:
+  todolist-db:
+    driver: local
+  todolist-uploads:
+    driver: local
+
+networks:
+  todolist-network:
+    driver: bridge

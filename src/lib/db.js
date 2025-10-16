@@ -1,0 +1,1093 @@
+import Database from 'better-sqlite3';
+import bcrypt from 'bcrypt';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import crypto from 'crypto';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const db = new Database(join(__dirname, '../../todos.db'));
+
+// Initialize database tables
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    is_admin INTEGER DEFAULT 0,
+    is_approved INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS lists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    created_by INTEGER NOT NULL,
+    is_shared INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS list_members (
+    list_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    permission_level TEXT NOT NULL DEFAULT 'editor',
+    joined_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (list_id, user_id),
+    FOREIGN KEY (list_id) REFERENCES lists(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS list_invitations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    list_id INTEGER NOT NULL,
+    inviter_id INTEGER NOT NULL,
+    invitee_id INTEGER NOT NULL,
+    permission_level TEXT NOT NULL DEFAULT 'editor',
+    status TEXT DEFAULT 'pending',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (list_id) REFERENCES lists(id) ON DELETE CASCADE,
+    FOREIGN KEY (inviter_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (invitee_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS todos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    list_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    completed INTEGER DEFAULT 0,
+    completed_by INTEGER,
+    is_recurring INTEGER DEFAULT 0,
+    recurrence_pattern TEXT,
+    next_occurrence TEXT,
+    due_date TEXT,
+    reminder_minutes_before INTEGER,
+    priority TEXT DEFAULT 'medium',
+    parent_todo_id INTEGER,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (list_id) REFERENCES lists(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (completed_by) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (parent_todo_id) REFERENCES todos(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_todos_list_id ON todos(list_id);
+  CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos(user_id);
+  CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+  CREATE INDEX IF NOT EXISTS idx_list_members_user_id ON list_members(user_id);
+  CREATE INDEX IF NOT EXISTS idx_list_invitations_invitee ON list_invitations(invitee_id, status);
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS task_attachments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    todo_id INTEGER NOT NULL,
+    original_name TEXT NOT NULL,
+    stored_name TEXT NOT NULL,
+    mime_type TEXT,
+    size INTEGER,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_task_attachments_todo ON task_attachments(todo_id);
+`);
+
+function ensureTodoColumn(name, definition) {
+  const columns = db.prepare('PRAGMA table_info(todos)').all();
+  const hasColumn = columns.some((column) => column.name === name);
+  if (!hasColumn) {
+    db.prepare(`ALTER TABLE todos ADD COLUMN ${name} ${definition}`).run();
+  }
+}
+
+function ensureUserColumn(name, definition) {
+  const columns = db.prepare('PRAGMA table_info(users)').all();
+  const hasColumn = columns.some((column) => column.name === name);
+  if (!hasColumn) {
+    db.prepare(`ALTER TABLE users ADD COLUMN ${name} ${definition}`).run();
+  }
+}
+
+ensureTodoColumn('due_date', 'TEXT');
+ensureTodoColumn('reminder_minutes_before', 'INTEGER');
+ensureTodoColumn('priority', "TEXT DEFAULT 'medium'");
+ensureTodoColumn('parent_todo_id', 'INTEGER');
+ensureTodoColumn('sort_order', 'INTEGER');
+ensureTodoColumn('notes', 'TEXT');
+ensureTodoColumn('assigned_to', 'INTEGER');
+ensureTodoColumn('deleted_at', 'TEXT');
+
+ensureUserColumn('dark_mode', 'INTEGER DEFAULT 0');
+ensureUserColumn('theme', "TEXT DEFAULT 'aurora'");
+ensureUserColumn('view_density', "TEXT DEFAULT 'comfortable'");
+
+function ensureTodoParentIndex() {
+  const columns = db.prepare('PRAGMA table_info(todos)').all();
+  const hasParentColumn = columns.some((column) => column.name === 'parent_todo_id');
+  if (hasParentColumn) {
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_todos_parent_id ON todos(parent_todo_id)').run();
+  }
+}
+
+ensureTodoParentIndex();
+
+function isUserMemberOfList(listId, userId) {
+  if (!listId || !userId) return false;
+  const member = db
+    .prepare('SELECT 1 FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(listId, userId);
+  return Boolean(member);
+}
+
+function normalizeAssignee(listId, assigneeId) {
+  if (assigneeId === undefined || assigneeId === null || assigneeId === '') {
+    return null;
+  }
+
+  const parsed = Number(assigneeId);
+  if (!Number.isInteger(parsed)) {
+    throw new Error('Invalid assignee id');
+  }
+
+  if (!isUserMemberOfList(listId, parsed)) {
+    throw new Error('Assignee must be a list member');
+  }
+
+  return parsed;
+}
+
+function getNextSortOrder(listId, parentTodoId) {
+  if (parentTodoId !== null && parentTodoId !== undefined) {
+    const result = db
+      .prepare('SELECT MAX(sort_order) as maxOrder FROM todos WHERE parent_todo_id = ?')
+      .get(parentTodoId);
+    const maxOrder = result?.maxOrder ?? 0;
+    return maxOrder + 1;
+  }
+
+  const result = db
+    .prepare('SELECT MAX(sort_order) as maxOrder FROM todos WHERE list_id = ? AND parent_todo_id IS NULL')
+    .get(listId);
+  const maxOrder = result?.maxOrder ?? 0;
+  return maxOrder + 1;
+}
+
+function normalizeDateTime(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toISOString();
+}
+
+function normalizeReminderMinutes(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function normalizePriority(value) {
+  const allowed = new Set(['low', 'medium', 'high']);
+  if (!value) {
+    return 'medium';
+  }
+  const normalized = String(value).toLowerCase();
+  return allowed.has(normalized) ? normalized : 'medium';
+}
+
+function sanitizeAttachment(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    todo_id: row.todo_id,
+    original_name: row.original_name,
+    mime_type: row.mime_type,
+    size: row.size,
+    created_at: row.created_at
+  };
+}
+
+function fetchAttachmentRowsByTodoIds(todoIds) {
+  if (!Array.isArray(todoIds) || todoIds.length === 0) {
+    return [];
+  }
+
+  const placeholders = todoIds.map(() => '?').join(',');
+  return db.prepare(`
+    SELECT *
+    FROM task_attachments
+    WHERE todo_id IN (${placeholders})
+    ORDER BY created_at DESC
+  `).all(...todoIds);
+}
+
+function groupSanitizedAttachments(rows) {
+  const map = new Map();
+  rows.forEach((row) => {
+    const sanitized = sanitizeAttachment(row);
+    if (!sanitized) return;
+    if (!map.has(row.todo_id)) {
+      map.set(row.todo_id, []);
+    }
+    map.get(row.todo_id).push(sanitized);
+  });
+  return map;
+}
+
+function getAttachmentRecord(id) {
+  return db.prepare(`
+    SELECT a.*, t.list_id
+    FROM task_attachments a
+    JOIN todos t ON a.todo_id = t.id
+    WHERE a.id = ?
+  `).get(id);
+}
+
+// ===== USER FUNCTIONS =====
+
+export async function createUser(username, email, password) {
+  const passwordHash = await bcrypt.hash(password, 10);
+
+  // Check if this is the first user
+  const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
+  const isFirstUser = userCount === 0;
+
+  try {
+    const result = db.prepare(`
+      INSERT INTO users (username, email, password_hash, is_admin, is_approved)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(username, email, passwordHash, isFirstUser ? 1 : 0, isFirstUser ? 1 : 0);
+
+    const user = getUser(result.lastInsertRowid);
+
+    // Create default personal list for the new user
+    const listResult = db.prepare(`
+      INSERT INTO lists (name, created_by, is_shared)
+      VALUES (?, ?, 0)
+    `).run('My Tasks', user.id);
+
+    // Add user as admin of their personal list
+    db.prepare(`
+      INSERT INTO list_members (list_id, user_id, permission_level)
+      VALUES (?, ?, 'admin')
+    `).run(listResult.lastInsertRowid, user.id);
+
+    return user;
+  } catch (error) {
+    if (error.message.includes('UNIQUE constraint failed')) {
+      if (error.message.includes('username')) {
+        throw new Error('Username already exists');
+      }
+      if (error.message.includes('email')) {
+        throw new Error('Email already exists');
+      }
+    }
+    throw error;
+  }
+}
+
+export function getUser(id) {
+  return db.prepare('SELECT id, username, email, is_admin, is_approved, dark_mode, theme, view_density, created_at FROM users WHERE id = ?').get(id);
+}
+
+export function getUserByUsername(username) {
+  return db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+}
+
+export function getUserByEmail(email) {
+  return db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+}
+
+export async function verifyPassword(password, hash) {
+  return await bcrypt.compare(password, hash);
+}
+
+export function updateUserDarkMode(userId, darkMode) {
+  db.prepare('UPDATE users SET dark_mode = ? WHERE id = ?').run(darkMode ? 1 : 0, userId);
+  return getUser(userId);
+}
+
+export function updateUserTheme(userId, theme) {
+  const allowedThemes = ['ocean', 'forest', 'sunset', 'midnight', 'candy', 'lavender', 'crimson', 'aurora', 'amber', 'monochrome', 'emerald'];
+  const normalizedTheme = allowedThemes.includes(theme) ? theme : 'aurora';
+  db.prepare('UPDATE users SET theme = ? WHERE id = ?').run(normalizedTheme, userId);
+  return getUser(userId);
+}
+
+export function updateUserViewDensity(userId, viewDensity) {
+  const allowedDensities = ['compact', 'comfortable', 'spacious'];
+  const normalizedDensity = allowedDensities.includes(viewDensity) ? viewDensity : 'comfortable';
+  db.prepare('UPDATE users SET view_density = ? WHERE id = ?').run(normalizedDensity, userId);
+  return getUser(userId);
+}
+
+// ===== SESSION FUNCTIONS =====
+
+export function createSession(userId) {
+  const sessionId = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
+
+  db.prepare(`
+    INSERT INTO sessions (id, user_id, expires_at)
+    VALUES (?, ?, ?)
+  `).run(sessionId, userId, expiresAt);
+
+  return { id: sessionId, userId, expiresAt };
+}
+
+export function getSession(sessionId) {
+  const session = db.prepare(`
+    SELECT s.*, u.username, u.email, u.is_admin, u.is_approved, u.dark_mode, u.theme, u.view_density
+    FROM sessions s
+    JOIN users u ON s.user_id = u.id
+    WHERE s.id = ? AND s.expires_at > datetime('now')
+  `).get(sessionId);
+
+  return session;
+}
+
+// ===== ADMIN FUNCTIONS =====
+
+export function getAllUsers() {
+  return db.prepare('SELECT id, username, email, is_admin, is_approved, dark_mode, theme, view_density, created_at FROM users ORDER BY created_at DESC').all();
+}
+
+export function getPendingUsers() {
+  return db.prepare('SELECT id, username, email, created_at FROM users WHERE is_approved = 0 ORDER BY created_at DESC').all();
+}
+
+export function approveUser(userId) {
+  db.prepare('UPDATE users SET is_approved = 1 WHERE id = ?').run(userId);
+  return getUser(userId);
+}
+
+export function rejectUser(userId) {
+  // Delete the user and their associated sessions
+  db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+}
+
+export function deleteSession(sessionId) {
+  db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+}
+
+export function cleanExpiredSessions() {
+  db.prepare("DELETE FROM sessions WHERE expires_at < datetime('now')").run();
+}
+
+// ===== TODO FUNCTIONS =====
+
+// Get todos for a specific list (with permission check)
+export function getTodosForList(listId, userId) {
+  cleanExpiredSessions();
+  checkRecurringTasksForList(listId, userId);
+
+  // Verify user has access to this list
+  const member = db.prepare('SELECT 1 FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(listId, userId);
+
+  if (!member) {
+    throw new Error('Access denied to this list');
+  }
+
+  // Get todos with user information for completed_by (exclude soft-deleted)
+  const todos = db.prepare(`
+    SELECT t.*, u.username as completed_by_username, a.username as assigned_to_username, a.email as assigned_to_email
+    FROM todos t
+    LEFT JOIN users u ON t.completed_by = u.id
+    LEFT JOIN users a ON t.assigned_to = a.id
+    WHERE t.list_id = ? AND t.deleted_at IS NULL
+    ORDER BY
+      CASE WHEN t.parent_todo_id IS NULL THEN 0 ELSE 1 END,
+      CASE WHEN t.sort_order IS NULL THEN 1 ELSE 0 END,
+      t.sort_order ASC,
+      t.created_at ASC
+  `).all(listId);
+
+  const attachmentsMap = groupSanitizedAttachments(fetchAttachmentRowsByTodoIds(todos.map((todo) => todo.id)));
+
+  return todos.map((todo) => ({
+    ...todo,
+    attachments: attachmentsMap.get(todo.id) ?? []
+  }));
+}
+
+export function getTodo(id, userId) {
+  const todo = db.prepare(`
+    SELECT t.*, u.username as completed_by_username, a.username as assigned_to_username, a.email as assigned_to_email
+    FROM todos t
+    LEFT JOIN users u ON t.completed_by = u.id
+    LEFT JOIN users a ON t.assigned_to = a.id
+    WHERE t.id = ?
+  `).get(id);
+
+  if (!todo) return null;
+
+  // Check if user has access to this todo's list
+  const member = db.prepare('SELECT 1 FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(todo.list_id, userId);
+
+  if (!member) return null;
+
+  const attachments = groupSanitizedAttachments(fetchAttachmentRowsByTodoIds([todo.id]));
+
+  return {
+    ...todo,
+    attachments: attachments.get(todo.id) ?? []
+  };
+}
+
+export function createTaskAttachment(todoId, userId, metadata) {
+  const todo = getTodo(todoId, userId);
+  if (!todo) {
+    throw new Error('Todo not found');
+  }
+
+  const { original_name, stored_name, mime_type = null, size = null } = metadata;
+
+  const result = db.prepare(`
+    INSERT INTO task_attachments (todo_id, original_name, stored_name, mime_type, size)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(todoId, original_name, stored_name, mime_type, size);
+
+  return getAttachmentRecord(result.lastInsertRowid);
+}
+
+export function getAttachmentForUser(attachmentId, userId) {
+  const attachment = getAttachmentRecord(attachmentId);
+  if (!attachment) return null;
+
+  const member = db.prepare('SELECT 1 FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(attachment.list_id, userId);
+
+  if (!member) return null;
+
+  return attachment;
+}
+
+export function deleteTaskAttachment(attachmentId, userId) {
+  const attachment = getAttachmentForUser(attachmentId, userId);
+  if (!attachment) return null;
+
+  db.prepare('DELETE FROM task_attachments WHERE id = ?').run(attachmentId);
+  return attachment;
+}
+
+export function listAttachmentsForTodo(todoId, userId) {
+  const todo = getTodo(todoId, userId);
+  if (!todo) return [];
+
+  const rows = db.prepare(`
+    SELECT *
+    FROM task_attachments
+    WHERE todo_id = ?
+    ORDER BY created_at DESC
+  `).all(todoId);
+
+  return rows.map((row) => sanitizeAttachment(row));
+}
+
+export function getAttachmentFilesForTodo(todoId, userId) {
+  const todo = getTodo(todoId, userId);
+  if (!todo) return [];
+
+  return db.prepare(`
+    SELECT *
+    FROM task_attachments
+    WHERE todo_id = ?
+  `).all(todoId);
+}
+
+export function createTodo(
+  listId,
+  userId,
+  text,
+  isRecurring = false,
+  recurrencePattern = null,
+  dueDate = null,
+  reminderMinutesBefore = null,
+  priority = 'medium',
+  parentTodoId = null,
+  assignedTo = null
+) {
+  // Verify user has access to this list
+  const member = db.prepare('SELECT permission_level FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(listId, userId);
+
+  if (!member) {
+    throw new Error('Access denied to this list');
+  }
+
+  let parentTodo = null;
+  let targetListId = listId;
+
+  if (parentTodoId !== null && parentTodoId !== undefined) {
+    parentTodo = getTodo(parentTodoId, userId);
+
+    if (!parentTodo) {
+      throw new Error('Parent todo not found');
+    }
+
+    if (parentTodo.list_id !== listId) {
+      throw new Error('Parent todo must belong to the same list');
+    }
+
+    if (parentTodo.parent_todo_id) {
+      throw new Error('Subtasks cannot have subtasks');
+    }
+
+    targetListId = parentTodo.list_id;
+  }
+
+  const normalizedDueDate = normalizeDateTime(dueDate);
+  const reminderMinutes = normalizeReminderMinutes(reminderMinutesBefore);
+  const normalizedPriority = normalizePriority(priority);
+  const normalizedAssignee = normalizeAssignee(targetListId, assignedTo);
+  const nextOccurrence = isRecurring && recurrencePattern
+    ? calculateNextOccurrence(recurrencePattern, normalizedDueDate ?? new Date())
+    : null;
+
+  const normalizedParentId = parentTodoId ?? null;
+  const sortOrder = getNextSortOrder(targetListId, normalizedParentId);
+
+  const result = db.prepare(`
+    INSERT INTO todos (list_id, user_id, text, completed, is_recurring, recurrence_pattern, next_occurrence, due_date, reminder_minutes_before, priority, parent_todo_id, sort_order, assigned_to)
+    VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    targetListId,
+    userId,
+    text,
+    isRecurring ? 1 : 0,
+    recurrencePattern,
+    nextOccurrence,
+    normalizedDueDate,
+    reminderMinutes,
+    normalizedPriority,
+    normalizedParentId,
+    sortOrder,
+    normalizedAssignee
+  );
+
+  return getTodo(result.lastInsertRowid, userId);
+}
+
+export function reorderTodos(listId, userId, updates) {
+  if (!Array.isArray(updates) || updates.length === 0) {
+    return;
+  }
+
+  const member = db.prepare('SELECT 1 FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(listId, userId);
+
+  if (!member) {
+    throw new Error('Access denied to this list');
+  }
+
+  const updateTodoOrder = db.prepare('UPDATE todos SET sort_order = ? WHERE id = ?');
+
+  const transaction = db.transaction((rows) => {
+    rows.forEach((row) => {
+      const id = Number(row.id);
+      const sortOrder = Number(row.sortOrder);
+      const parentId = row.parentId ?? null;
+
+      if (!Number.isInteger(id) || !Number.isInteger(sortOrder)) {
+        throw new Error('Invalid reorder payload');
+      }
+
+      const todo = getTodo(id, userId);
+      if (!todo) {
+        throw new Error('Todo not found');
+      }
+
+      if (todo.list_id !== listId) {
+        throw new Error('Todo does not belong to this list');
+      }
+
+      const currentParent = todo.parent_todo_id ?? null;
+      if ((parentId ?? null) !== currentParent) {
+        throw new Error('Cannot change parent via reorder');
+      }
+
+      updateTodoOrder.run(sortOrder, id);
+    });
+  });
+
+  transaction(updates);
+}
+
+export function updateTodo(id, userId, updates) {
+  const todo = getTodo(id, userId);
+  if (!todo) return null;
+
+  // Check if trying to mark parent as complete when it has incomplete subtasks
+  if (updates.completed === true && !todo.completed && !todo.parent_todo_id) {
+    const incompleteSubtasks = db.prepare(
+      'SELECT COUNT(*) as count FROM todos WHERE parent_todo_id = ? AND completed = 0'
+    ).get(id);
+
+    if (incompleteSubtasks && incompleteSubtasks.count > 0) {
+      throw new Error('Cannot complete parent task with incomplete subtasks');
+    }
+  }
+
+  const completed = updates.completed !== undefined ? (updates.completed ? 1 : 0) : todo.completed;
+  const text = updates.text !== undefined ? updates.text : todo.text;
+  let completedBy = todo.completed_by;
+
+  if (updates.completed !== undefined) {
+    if (updates.completed) {
+      completedBy = todo.completed ? todo.completed_by : userId;
+    } else {
+      completedBy = null;
+    }
+  }
+
+  const dueDateUpdate =
+    updates.dueDate !== undefined ? normalizeDateTime(updates.dueDate)
+    : (updates.due_date !== undefined ? normalizeDateTime(updates.due_date) : todo.due_date);
+  const reminderMinutesUpdate =
+    updates.reminderMinutesBefore !== undefined
+      ? normalizeReminderMinutes(updates.reminderMinutesBefore)
+      : (updates.reminder_minutes_before !== undefined
+        ? normalizeReminderMinutes(updates.reminder_minutes_before)
+        : normalizeReminderMinutes(todo.reminder_minutes_before));
+  const priorityUpdate =
+    updates.priority !== undefined
+      ? normalizePriority(updates.priority)
+      : (updates.priority_level !== undefined
+        ? normalizePriority(updates.priority_level)
+        : normalizePriority(todo.priority));
+  const notesUpdate = updates.notes !== undefined ? updates.notes : todo.notes;
+  const hasAssigneeUpdate = updates.assigned_to !== undefined || updates.assignedTo !== undefined;
+  const assigneeUpdate = hasAssigneeUpdate
+    ? normalizeAssignee(todo.list_id, updates.assigned_to !== undefined ? updates.assigned_to : updates.assignedTo)
+    : (todo.assigned_to ?? null);
+
+  db.prepare('UPDATE todos SET text = ?, completed = ?, completed_by = ?, due_date = ?, reminder_minutes_before = ?, priority = ?, notes = ?, assigned_to = ? WHERE id = ?')
+    .run(text, completed, completedBy, dueDateUpdate, reminderMinutesUpdate, priorityUpdate, notesUpdate, assigneeUpdate, id);
+
+  // If completing a recurring task, create the next occurrence
+  if (todo.is_recurring && updates.completed && !todo.completed) {
+    createNextRecurrence(todo, userId);
+  }
+
+  return getTodo(id, userId);
+}
+
+export function deleteTodo(id, userId) {
+  const todo = getTodo(id, userId);
+  if (!todo) return false;
+
+  // Check if user has permission to delete (must be editor or admin)
+  const member = db.prepare('SELECT permission_level FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(todo.list_id, userId);
+
+  if (!member) return false;
+
+  // Soft delete - set deleted_at timestamp
+  const deletedAt = new Date().toISOString();
+  const result = db.prepare('UPDATE todos SET deleted_at = ? WHERE id = ?').run(deletedAt, id);
+  return result.changes > 0;
+}
+
+// Get deleted todos for a list (soft-deleted within last 7 days)
+export function getDeletedTodosForList(listId, userId) {
+  // Verify user has access to this list
+  const member = db.prepare('SELECT 1 FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(listId, userId);
+
+  if (!member) {
+    throw new Error('Access denied to this list');
+  }
+
+  // Get todos deleted within last 7 days
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const todos = db.prepare(`
+    SELECT t.*, u.username as completed_by_username, a.username as assigned_to_username, a.email as assigned_to_email
+    FROM todos t
+    LEFT JOIN users u ON t.completed_by = u.id
+    LEFT JOIN users a ON t.assigned_to = a.id
+    WHERE t.list_id = ? AND t.deleted_at IS NOT NULL AND t.deleted_at >= ?
+    ORDER BY t.deleted_at DESC
+  `).all(listId, sevenDaysAgo);
+
+  const attachmentsMap = groupSanitizedAttachments(fetchAttachmentRowsByTodoIds(todos.map((todo) => todo.id)));
+
+  return todos.map((todo) => ({
+    ...todo,
+    attachments: attachmentsMap.get(todo.id) ?? []
+  }));
+}
+
+// Restore a soft-deleted todo
+export function restoreTodo(id, userId) {
+  // Get the todo including soft-deleted ones
+  const todo = db.prepare(`
+    SELECT t.*, u.username as completed_by_username, a.username as assigned_to_username, a.email as assigned_to_email
+    FROM todos t
+    LEFT JOIN users u ON t.completed_by = u.id
+    LEFT JOIN users a ON t.assigned_to = a.id
+    WHERE t.id = ?
+  `).get(id);
+
+  if (!todo) return null;
+
+  // Check if user has access to this todo's list
+  const member = db.prepare('SELECT 1 FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(todo.list_id, userId);
+
+  if (!member) return null;
+
+  // Restore by setting deleted_at to NULL
+  const result = db.prepare('UPDATE todos SET deleted_at = NULL WHERE id = ?').run(id);
+
+  if (result.changes > 0) {
+    return getTodo(id, userId);
+  }
+
+  return null;
+}
+
+// Permanently delete a todo (hard delete)
+export function permanentlyDeleteTodo(id, userId) {
+  // Get the todo including soft-deleted ones
+  const todo = db.prepare('SELECT * FROM todos WHERE id = ?').get(id);
+
+  if (!todo) return false;
+
+  // Check if user has access to this todo's list
+  const member = db.prepare('SELECT permission_level FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(todo.list_id, userId);
+
+  if (!member) return false;
+
+  // Hard delete
+  const result = db.prepare('DELETE FROM todos WHERE id = ?').run(id);
+  return result.changes > 0;
+}
+
+// Clean up todos deleted more than 7 days ago
+export function cleanupOldDeletedTodos() {
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const result = db.prepare('DELETE FROM todos WHERE deleted_at IS NOT NULL AND deleted_at < ?').run(sevenDaysAgo);
+  return result.changes;
+}
+
+// Permanently delete all deleted todos for a specific list
+export function deleteAllDeletedTodosForList(listId, userId) {
+  // Verify user has access to this list
+  const member = db.prepare('SELECT permission_level FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(listId, userId);
+
+  if (!member) {
+    throw new Error('Access denied to this list');
+  }
+
+  // Delete all soft-deleted todos for this list
+  const result = db.prepare('DELETE FROM todos WHERE list_id = ? AND deleted_at IS NOT NULL').run(listId);
+  return result.changes;
+}
+
+function calculateNextOccurrence(pattern, fromDate = new Date()) {
+  const base = new Date(fromDate);
+
+  switch (pattern) {
+    case 'daily':
+      base.setDate(base.getDate() + 1);
+      break;
+    case 'weekly':
+      base.setDate(base.getDate() + 7);
+      break;
+    case 'monthly':
+      base.setMonth(base.getMonth() + 1);
+      break;
+    case 'yearly':
+      base.setFullYear(base.getFullYear() + 1);
+      break;
+  }
+
+  return base.toISOString();
+}
+
+function createNextRecurrence(todo, userId) {
+  if (!todo.recurrence_pattern) return;
+
+  const nextOccurrence = calculateNextOccurrence(
+    todo.recurrence_pattern,
+    todo.next_occurrence ?? new Date()
+  );
+  const nextDueDate = todo.due_date
+    ? calculateNextOccurrence(todo.recurrence_pattern, todo.due_date)
+    : null;
+  const priority = normalizePriority(todo.priority);
+  const parentTodoId = todo.parent_todo_id ?? null;
+
+  const sortOrder = getNextSortOrder(todo.list_id, parentTodoId ?? null);
+
+  db.prepare(`
+    INSERT INTO todos (list_id, user_id, text, completed, is_recurring, recurrence_pattern, next_occurrence, due_date, reminder_minutes_before, priority, parent_todo_id, sort_order)
+    VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    todo.list_id,
+    userId,
+    todo.text,
+    todo.recurrence_pattern,
+    nextOccurrence,
+    nextDueDate,
+    normalizeReminderMinutes(todo.reminder_minutes_before),
+    priority,
+    parentTodoId ?? null,
+    sortOrder
+  );
+}
+
+// Check and create due recurring tasks for a specific list
+export function checkRecurringTasksForList(listId, userId) {
+  // Verify user has access to this list
+  const member = db.prepare('SELECT 1 FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(listId, userId);
+
+  if (!member) return;
+
+  const now = new Date().toISOString();
+  const dueTasks = db.prepare(`
+    SELECT * FROM todos
+    WHERE list_id = ?
+    AND is_recurring = 1
+    AND completed = 1
+    AND next_occurrence IS NOT NULL
+    AND next_occurrence <= ?
+  `).all(listId, now);
+
+  dueTasks.forEach(task => {
+    createNextRecurrence(task, task.user_id);
+    // Update the next occurrence for the completed task
+    const nextBase = task.next_occurrence ?? task.due_date ?? new Date();
+    const newNext = calculateNextOccurrence(task.recurrence_pattern, nextBase);
+    db.prepare('UPDATE todos SET next_occurrence = ? WHERE id = ?')
+      .run(newNext, task.id);
+  });
+}
+
+// ===== LIST FUNCTIONS =====
+
+export function getUserLists(userId) {
+  return db.prepare(`
+    SELECT l.*, lm.permission_level,
+      (SELECT COUNT(*) FROM list_members WHERE list_id = l.id) as member_count
+    FROM lists l
+    JOIN list_members lm ON l.id = lm.list_id
+    WHERE lm.user_id = ?
+    ORDER BY l.created_at DESC
+  `).all(userId);
+}
+
+export function getList(listId, userId) {
+  const list = db.prepare(`
+    SELECT l.*, lm.permission_level
+    FROM lists l
+    JOIN list_members lm ON l.id = lm.list_id
+    WHERE l.id = ? AND lm.user_id = ?
+  `).get(listId, userId);
+
+  if (list) {
+    list.members = db.prepare(`
+      SELECT lm.*, u.username, u.email
+      FROM list_members lm
+      JOIN users u ON lm.user_id = u.id
+      WHERE lm.list_id = ?
+    `).all(listId);
+  }
+
+  return list;
+}
+
+export function getListMembersForUser(listId, userId) {
+  const requester = db.prepare('SELECT permission_level FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(listId, userId);
+
+  if (!requester) {
+    throw new Error('Access denied to this list');
+  }
+
+  return db.prepare(`
+    SELECT u.id, u.username, u.email, lm.permission_level
+    FROM list_members lm
+    JOIN users u ON lm.user_id = u.id
+    WHERE lm.list_id = ?
+    ORDER BY lower(u.username)
+  `).all(listId);
+}
+
+export function createList(userId, name, isShared = false) {
+  const result = db.prepare(`
+    INSERT INTO lists (name, created_by, is_shared)
+    VALUES (?, ?, ?)
+  `).run(name, userId, isShared ? 1 : 0);
+
+  // Add creator as admin
+  db.prepare(`
+    INSERT INTO list_members (list_id, user_id, permission_level)
+    VALUES (?, ?, 'admin')
+  `).run(result.lastInsertRowid, userId);
+
+  return getList(result.lastInsertRowid, userId);
+}
+
+export function updateList(listId, userId, updates) {
+  // Check if user has admin permission
+  const member = db.prepare('SELECT permission_level FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(listId, userId);
+
+  if (!member || member.permission_level !== 'admin') {
+    throw new Error('Insufficient permissions');
+  }
+
+  if (updates.name) {
+    db.prepare('UPDATE lists SET name = ? WHERE id = ?').run(updates.name, listId);
+  }
+
+  return getList(listId, userId);
+}
+
+export function deleteList(listId, userId) {
+  const list = getList(listId, userId);
+  if (!list || list.permission_level !== 'admin') {
+    throw new Error('Insufficient permissions');
+  }
+
+  db.prepare('DELETE FROM lists WHERE id = ?').run(listId);
+  return true;
+}
+
+// ===== INVITATION FUNCTIONS =====
+
+export function createInvitation(listId, inviterId, inviteeUsername, permissionLevel = 'editor') {
+  const invitee = getUserByUsername(inviteeUsername);
+  if (!invitee) {
+    throw new Error('User not found');
+  }
+
+  // Check if inviter has admin permission
+  const member = db.prepare('SELECT permission_level FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(listId, inviterId);
+
+  if (!member || member.permission_level !== 'admin') {
+    throw new Error('Insufficient permissions');
+  }
+
+  // Check if user is already a member
+  const existingMember = db.prepare('SELECT 1 FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(listId, invitee.id);
+
+  if (existingMember) {
+    throw new Error('User is already a member of this list');
+  }
+
+  // Check for existing pending invitation
+  const existingInvite = db.prepare(`
+    SELECT 1 FROM list_invitations
+    WHERE list_id = ? AND invitee_id = ? AND status = 'pending'
+  `).get(listId, invitee.id);
+
+  if (existingInvite) {
+    throw new Error('Invitation already sent to this user');
+  }
+
+  const result = db.prepare(`
+    INSERT INTO list_invitations (list_id, inviter_id, invitee_id, permission_level)
+    VALUES (?, ?, ?, ?)
+  `).run(listId, inviterId, invitee.id, permissionLevel);
+
+  return db.prepare(`
+    SELECT i.*, l.name as list_name, u.username as inviter_username
+    FROM list_invitations i
+    JOIN lists l ON i.list_id = l.id
+    JOIN users u ON i.inviter_id = u.id
+    WHERE i.id = ?
+  `).get(result.lastInsertRowid);
+}
+
+export function getUserInvitations(userId) {
+  return db.prepare(`
+    SELECT i.*, l.name as list_name, u.username as inviter_username
+    FROM list_invitations i
+    JOIN lists l ON i.list_id = l.id
+    JOIN users u ON i.inviter_id = u.id
+    WHERE i.invitee_id = ? AND i.status = 'pending'
+    ORDER BY i.created_at DESC
+  `).all(userId);
+}
+
+export function acceptInvitation(invitationId, userId) {
+  const invitation = db.prepare('SELECT * FROM list_invitations WHERE id = ? AND invitee_id = ?')
+    .get(invitationId, userId);
+
+  if (!invitation) {
+    throw new Error('Invitation not found');
+  }
+
+  if (invitation.status !== 'pending') {
+    throw new Error('Invitation already processed');
+  }
+
+  // Add user to list
+  db.prepare(`
+    INSERT INTO list_members (list_id, user_id, permission_level)
+    VALUES (?, ?, ?)
+  `).run(invitation.list_id, userId, invitation.permission_level);
+
+  // Update invitation status
+  db.prepare("UPDATE list_invitations SET status = 'accepted' WHERE id = ?").run(invitationId);
+
+  return getList(invitation.list_id, userId);
+}
+
+export function rejectInvitation(invitationId, userId) {
+  const invitation = db.prepare('SELECT * FROM list_invitations WHERE id = ? AND invitee_id = ?')
+    .get(invitationId, userId);
+
+  if (!invitation) {
+    throw new Error('Invitation not found');
+  }
+
+  db.prepare("UPDATE list_invitations SET status = 'rejected' WHERE id = ?").run(invitationId);
+  return true;
+}
+
+export function removeMember(listId, userId, memberIdToRemove) {
+  // Check if user has admin permission
+  const member = db.prepare('SELECT permission_level FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(listId, userId);
+
+  if (!member || member.permission_level !== 'admin') {
+    throw new Error('Insufficient permissions');
+  }
+
+  // Can't remove the list creator
+  const list = db.prepare('SELECT created_by FROM lists WHERE id = ?').get(listId);
+  if (list.created_by === memberIdToRemove) {
+    throw new Error('Cannot remove list creator');
+  }
+
+  db.prepare('DELETE FROM list_members WHERE list_id = ? AND user_id = ?').run(listId, memberIdToRemove);
+  return true;
+}
+
+export default db;
