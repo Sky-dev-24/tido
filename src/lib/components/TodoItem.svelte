@@ -5,7 +5,17 @@
 	import TodoItemComponent from './TodoItem.svelte';
 	import { emitEditing, emitStoppedEditing, emitTyping, emitStoppedTyping } from '$lib/stores/websocket.js';
 
-	let { todo, level = 0, currentUserId } = $props();
+	let {
+		todo,
+		level = 0,
+		currentUserId,
+		onDragStart = null,
+		onDragOver = null,
+		onDrop = null,
+		onDragEnd = null,
+		isDragging = false,
+		isDragOver = false
+	} = $props();
 
 	const {
 		toggleTodoComplete,
@@ -412,6 +422,13 @@ function handleAssigneeKeyDown(event) {
 	class:completed={todo.completed}
 	class:being-edited={editingUser !== null}
 	class:completing={isCompletionAnimating}
+	class:dragging={isDragging}
+	class:drag-over={isDragOver}
+	draggable={onDragStart !== null}
+	ondragstart={onDragStart ? () => onDragStart(todo) : null}
+	ondragover={onDragOver ? (e) => onDragOver(e, todo) : null}
+	ondrop={onDrop ? (e) => onDrop(e, todo) : null}
+	ondragend={onDragEnd ? () => onDragEnd() : null}
 >
 	{#if editingUser}
 		<div class="presence-indicator">
@@ -664,7 +681,17 @@ function handleAssigneeKeyDown(event) {
 	{#if canHaveSubtasks && hasChildren && isExpanded(todo.id)}
 		<ul class="child-list">
 			{#each childTodos as subtask (subtask.id)}
-				<TodoItemComponent todo={subtask} level={level + 1} {currentUserId} />
+				<TodoItemComponent
+					todo={subtask}
+					level={level + 1}
+					{currentUserId}
+					{onDragStart}
+					{onDragOver}
+					{onDrop}
+					{onDragEnd}
+					isDragging={false}
+					isDragOver={false}
+				/>
 			{/each}
 		</ul>
 	{/if}
@@ -705,8 +732,25 @@ function handleAssigneeKeyDown(event) {
 		border-radius: 12px;
 		box-shadow: 0 4px 14px rgba(64, 76, 140, 0.06);
 		padding: var(--todo-item-padding, 0.9rem 1.1rem);
-		transition: border-color 0.2s ease, box-shadow 0.2s ease;
+		transition: border-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease, transform 0.2s ease;
 		position: relative;
+		cursor: grab;
+	}
+
+	.todo-item[draggable="true"]:active {
+		cursor: grabbing;
+	}
+
+	.todo-item.dragging {
+		opacity: 0.5;
+		transform: scale(0.98);
+	}
+
+	.todo-item.drag-over {
+		border-color: #667eea;
+		border-width: 2px;
+		border-style: dashed;
+		box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
 	}
 
 	.todo-item.being-edited {

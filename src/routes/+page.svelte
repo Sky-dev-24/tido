@@ -371,6 +371,102 @@ async function addSubtask(parentId, text, priority) {
 	return false;
 }
 
+// Drag and drop state
+let draggedTodo = $state(null);
+let dragOverTodo = $state(null);
+
+function handleDragStart(todo) {
+	draggedTodo = todo;
+}
+
+function handleDragOver(event, todo) {
+	event.preventDefault();
+	if (draggedTodo && draggedTodo.id !== todo.id) {
+		dragOverTodo = todo;
+	}
+}
+
+function handleDragEnd() {
+	draggedTodo = null;
+	dragOverTodo = null;
+}
+
+async function handleDrop(event, targetTodo) {
+	event.preventDefault();
+
+	if (!draggedTodo || !targetTodo || draggedTodo.id === targetTodo.id) {
+		handleDragEnd();
+		return;
+	}
+
+	// Can't drag parent into its own subtask
+	if (draggedTodo.parent_todo_id === null && targetTodo.parent_todo_id === draggedTodo.id) {
+		handleDragEnd();
+		return;
+	}
+
+	// Can't mix levels (parent vs subtask)
+	if ((draggedTodo.parent_todo_id === null) !== (targetTodo.parent_todo_id === null)) {
+		handleDragEnd();
+		return;
+	}
+
+	const todosList = displayedTodos.filter(t =>
+		(t.parent_todo_id === null) === (draggedTodo.parent_todo_id === null) &&
+		(t.parent_todo_id === draggedTodo.parent_todo_id)
+	);
+
+	const draggedIndex = todosList.findIndex(t => t.id === draggedTodo.id);
+	const targetIndex = todosList.findIndex(t => t.id === targetTodo.id);
+
+	if (draggedIndex === -1 || targetIndex === -1) {
+		handleDragEnd();
+		return;
+	}
+
+	// Reorder locally
+	const newOrder = [...todosList];
+	const [removed] = newOrder.splice(draggedIndex, 1);
+	newOrder.splice(targetIndex, 0, removed);
+
+	// Update sort orders
+	const updates = newOrder.map((todo, index) => ({
+		id: todo.id,
+		sortOrder: index,
+		parentId: todo.parent_todo_id
+	}));
+
+	// Update local state optimistically
+	const updatedTodos = displayedTodos.map(todo => {
+		const update = updates.find(u => u.id === todo.id);
+		return update ? { ...todo, sort_order: update.sortOrder } : todo;
+	});
+
+	displayedTodos = updatedTodos;
+
+	// Send to server
+	try {
+		const response = await fetch('/api/todos/reorder', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				listId: currentList.id,
+				updates
+			})
+		});
+
+		if (!response.ok) {
+			// Revert on error
+			await fetchTodos();
+		}
+	} catch (error) {
+		console.error('Failed to reorder todos:', error);
+		await fetchTodos();
+	}
+
+	handleDragEnd();
+}
+
 	let cleanupTodoCreated;
 	let cleanupTodoUpdated;
 	let cleanupTodoDeleted;
@@ -1434,7 +1530,17 @@ setContext('todo-actions', {
 		{#if filteredRootTodos.length}
 			<ul class="todo-list">
 				{#each filteredRootTodos as todo (todo.id)}
-					<TodoItem {todo} level={0} currentUserId={data.user.id} />
+					<TodoItem
+						{todo}
+						level={0}
+						currentUserId={data.user.id}
+						onDragStart={handleDragStart}
+						onDragOver={handleDragOver}
+						onDrop={handleDrop}
+						onDragEnd={handleDragEnd}
+						isDragging={draggedTodo?.id === todo.id}
+						isDragOver={dragOverTodo?.id === todo.id}
+					/>
 				{/each}
 			</ul>
 		{:else}
