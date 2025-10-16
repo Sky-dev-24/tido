@@ -1225,7 +1225,7 @@ setContext('todo-actions', {
 </script>
 
 <svelte:head>
-	<title>Todo List App</title>
+	<title>Tido</title>
 </svelte:head>
 
 <div class="app-container">

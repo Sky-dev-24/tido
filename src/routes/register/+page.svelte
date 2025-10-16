@@ -52,7 +52,7 @@
 </script>
 
 <svelte:head>
-	<title>Register - Todo List</title>
+	<title>Register - Tido</title>
 </svelte:head>
 
 <div class="auth-container">
@@ -67,7 +67,7 @@
 			<a href="/login" class="btn-primary">Return to Login</a>
 		{:else}
 			<h1>Create Account</h1>
-			<p class="subtitle">Sign up to start managing your todos</p>
+			<p class="subtitle">Sign up to start using Tido</p>
 
 			{#if error}
 				<div class="error-message">{error}</div>

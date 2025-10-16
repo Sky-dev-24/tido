@@ -54,7 +54,7 @@
 </script>
 
 <svelte:head>
-	<title>Admin Dashboard - Todo List</title>
+	<title>Admin Dashboard - Tido</title>
 </svelte:head>
 
 <div class="admin-container">

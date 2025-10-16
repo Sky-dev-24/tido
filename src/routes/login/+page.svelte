@@ -43,13 +43,13 @@
 </script>
 
 <svelte:head>
-	<title>Login - Todo List</title>
+	<title>Login - Tido</title>
 </svelte:head>
 
 <div class="auth-container">
 	<div class="auth-card">
 		<h1>Welcome Back</h1>
-		<p class="subtitle">Sign in to access your todos</p>
+		<p class="subtitle">Sign in to Tido</p>
 
 		{#if error}
 			<div class="error-message">{error}</div>
