@@ -17,7 +17,7 @@ Make sure all your code is committed and pushed to your GitHub repository.
 1. **Log into Portainer**
 2. **Navigate to Stacks** → Click "Add stack"
 3. **Configure the stack:**
-   - **Name**: `todolist` (or any name you prefer)
+   - **Name**: `tido` (or any name you prefer)
    - **Build method**: Select "Repository"
    - **Repository URL**: `https://github.com/YOUR_USERNAME/YOUR_REPO.git`
    - **Repository reference**: `refs/heads/main` (or your branch name)
@@ -70,7 +70,7 @@ Once deployed, access your application at:
 
 ### Manual Update via Portainer:
 1. Go to **Stacks**
-2. Select your `todolist` stack
+2. Select your `tido` stack
 3. Click **Pull and redeploy**
 4. Or click **Editor** to modify the compose file, then **Update the stack**
 
@@ -87,18 +87,18 @@ Once deployed, access your application at:
 ## Data Persistence
 
 Your data is stored in Docker named volumes:
-- `todolist-db`: Contains the SQLite database
-- `todolist-uploads`: Contains task attachment files
+- `tido-db`: Contains the SQLite database
+- `tido-uploads`: Contains task attachment files
 
 ### Backup Volumes
 
 To backup your data:
 ```bash
 # Backup database
-docker run --rm -v todolist-db:/data -v $(pwd):/backup alpine tar czf /backup/todolist-db-backup.tar.gz -C /data .
+docker run --rm -v tido-db:/data -v $(pwd):/backup alpine tar czf /backup/tido-db-backup.tar.gz -C /data .
 
 # Backup uploads
-docker run --rm -v todolist-uploads:/data -v $(pwd):/backup alpine tar czf /backup/todolist-uploads-backup.tar.gz -C /data .
+docker run --rm -v tido-uploads:/data -v $(pwd):/backup alpine tar czf /backup/tido-uploads-backup.tar.gz -C /data .
 ```
 
 ### Restore Volumes
@@ -106,22 +106,22 @@ docker run --rm -v todolist-uploads:/data -v $(pwd):/backup alpine tar czf /back
 To restore backups:
 ```bash
 # Restore database
-docker run --rm -v todolist-db:/data -v $(pwd):/backup alpine tar xzf /backup/todolist-db-backup.tar.gz -C /data
+docker run --rm -v tido-db:/data -v $(pwd):/backup alpine tar xzf /backup/tido-db-backup.tar.gz -C /data
 
 # Restore uploads
-docker run --rm -v todolist-uploads:/data -v $(pwd):/backup alpine tar xzf /backup/todolist-uploads-backup.tar.gz -C /data
+docker run --rm -v tido-uploads:/data -v $(pwd):/backup alpine tar xzf /backup/tido-uploads-backup.tar.gz -C /data
 ```
 
 ## Troubleshooting
 
 ### View Logs
 1. In Portainer, go to **Containers**
-2. Click on `todolist-app`
+2. Click on `tido-app`
 3. Click **Logs**
 
 Or via command line:
 ```bash
-docker logs todolist-app
+docker logs tido-app
 ```
 
 ### Container Won't Start

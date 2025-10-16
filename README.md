@@ -1,6 +1,6 @@
-# Todo List Application
+# Tido
 
-A modern, real-time collaborative todo list application built with SvelteKit and Socket.io.
+A modern, real-time collaborative task management application built with SvelteKit and Socket.io.
 
 ## Features
 

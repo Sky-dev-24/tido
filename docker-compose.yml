@@ -1,29 +1,29 @@
 version: '3.8'
 
 services:
-  todolist:
+  tido:
     build: .
-    container_name: todolist-app
+    container_name: tido-app
     ports:
       - "3000:3000"
     volumes:
       # Persist SQLite database using named volume
-      - todolist-db:/app/src/lib
+      - tido-db:/app/src/lib
       # Persist uploaded files using named volume
-      - todolist-uploads:/app/uploads
+      - tido-uploads:/app/uploads
     environment:
       - NODE_ENV=production
       - PORT=3000
     restart: unless-stopped
     networks:
-      - todolist-network
+      - tido-network
 
 volumes:
-  todolist-db:
+  tido-db:
     driver: local
-  todolist-uploads:
+  tido-uploads:
     driver: local
 
 networks:
-  todolist-network:
+  tido-network:
     driver: bridge
