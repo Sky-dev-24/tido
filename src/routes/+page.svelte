@@ -45,7 +45,7 @@ let invitePermission = $state('editor');
 let newTodoDueDate = $state('');
 let newTodoReminder = $state('');
 let currentListMembers = $state([]);
-let assignmentFilter = $state('all');
+let sortMode = $state('manual');
 let showCalendarModal = $state(false);
 let deletedTodos = $state([]);
 let calendarReference = $state(new Date());
@@ -97,17 +97,6 @@ function sortByOrder(items) {
 
 function getPriorityLabel(value) {
  return PRIORITY_LABELS[resolvePriorityKey(value)] ?? 'Medium priority';
-}
-
-function matchesAssignment(todo) {
-	if (!todo) return false;
-	if (assignmentFilter === 'mine') {
-		return todo.assigned_to === currentUserId;
-	}
-	if (assignmentFilter === 'unassigned') {
-		return todo.assigned_to === null || todo.assigned_to === undefined;
-	}
-	return true;
 }
 
 let structuredTodos = $derived.by(() => {
@@ -172,8 +161,84 @@ let structuredTodos = $derived.by(() => {
 	return sortByOrder(normalizedRoots);
 });
 
-let filteredRootTodos = $derived.by(() => {
+let sortedRootTodos = $derived.by(() => {
 	const roots = structuredTodos;
+	if (!roots.length) return [];
+
+	if (sortMode === 'manual') {
+		return roots;
+	}
+
+	const manualIndex = new Map(roots.map((todo, index) => [todo.id, index]));
+	const byManualOrder = (a, b) => {
+		return (manualIndex.get(a.id) ?? 0) - (manualIndex.get(b.id) ?? 0);
+	};
+
+	const list = [...roots];
+
+	switch (sortMode) {
+		case 'priority':
+			return list.sort((a, b) => {
+				const priorityDelta =
+					(PRIORITY_ORDER[resolvePriorityKey(a.priority)] ?? 1) -
+					(PRIORITY_ORDER[resolvePriorityKey(b.priority)] ?? 1);
+				if (priorityDelta !== 0) return priorityDelta;
+				return byManualOrder(a, b);
+			});
+		case 'dueDate':
+			return list.sort((a, b) => {
+				const aDue = a.due_date ? new Date(a.due_date).getTime() : null;
+				const bDue = b.due_date ? new Date(b.due_date).getTime() : null;
+
+				const aValid = Number.isFinite(aDue);
+				const bValid = Number.isFinite(bDue);
+
+				if (!aValid && !bValid) return byManualOrder(a, b);
+				if (!aValid) return 1;
+				if (!bValid) return -1;
+				if (aDue !== bDue) return aDue - bDue;
+				return byManualOrder(a, b);
+			});
+		case 'created':
+			return list.sort((a, b) => {
+				const aTime = new Date(a.created_at ?? 0).getTime();
+				const bTime = new Date(b.created_at ?? 0).getTime();
+
+				if (aTime !== bTime) return bTime - aTime; // newest first
+				return byManualOrder(a, b);
+			});
+		case 'alphabetical':
+			return list.sort((a, b) => {
+				const textA = (a.text ?? '').toLocaleLowerCase();
+				const textB = (b.text ?? '').toLocaleLowerCase();
+				if (textA !== textB) return textA.localeCompare(textB);
+				return byManualOrder(a, b);
+			});
+		case 'assigned':
+			return list.sort((a, b) => {
+				const aAssigned = a.assigned_to !== null && a.assigned_to !== undefined;
+				const bAssigned = b.assigned_to !== null && b.assigned_to !== undefined;
+
+				if (aAssigned !== bAssigned) {
+					return aAssigned ? -1 : 1;
+				}
+
+				if (!aAssigned && !bAssigned) {
+					return byManualOrder(a, b);
+				}
+
+				const nameA = (a.assigned_to_username ?? '').toLocaleLowerCase();
+				const nameB = (b.assigned_to_username ?? '').toLocaleLowerCase();
+				if (nameA !== nameB) return nameA.localeCompare(nameB);
+				return byManualOrder(a, b);
+			});
+		default:
+			return roots;
+	}
+});
+
+let filteredRootTodos = $derived.by(() => {
+	const roots = sortedRootTodos;
 	let filtered = roots;
 	if (filter === 'active') {
 		filtered = roots.filter((todo) => !todo.completed || todo.subtasks.some((sub) => !sub.completed));
@@ -184,16 +249,7 @@ let filteredRootTodos = $derived.by(() => {
 		});
 	}
 
-	if (assignmentFilter === 'all') {
-		return filtered;
-	}
-
-	return filtered.filter((root) => {
-		if (matchesAssignment(root)) {
-			return true;
-		}
-		return root.subtasks?.some((subtask) => matchesAssignment(subtask));
-	});
+	return filtered;
 });
 
 let remainingCount = $derived(todos.filter((t) => !t.completed).length);
@@ -374,12 +430,20 @@ async function addSubtask(parentId, text, priority) {
 // Drag and drop state
 let draggedTodo = $state(null);
 let dragOverTodo = $state(null);
+let dragOverTopZone = $state(false);
 
 function handleDragStart(todo) {
+	if (sortMode !== 'manual') {
+		return;
+	}
 	draggedTodo = todo;
+	dragOverTopZone = false;
 }
 
 function handleDragOver(event, todo) {
+	if (sortMode !== 'manual') {
+		return;
+	}
 	event.preventDefault();
 	if (draggedTodo && draggedTodo.id !== todo.id) {
 		dragOverTodo = todo;
@@ -389,10 +453,50 @@ function handleDragOver(event, todo) {
 function handleDragEnd() {
 	draggedTodo = null;
 	dragOverTodo = null;
+	dragOverTopZone = false;
+}
+
+async function submitReorder(newOrder) {
+	if (!currentList || !Array.isArray(newOrder) || newOrder.length === 0) {
+		return;
+	}
+
+	const updates = newOrder.map((todo, index) => ({
+		id: todo.id,
+		sortOrder: index,
+		parentId: todo.parent_todo_id ?? null
+	}));
+
+	const sortOrderMap = new Map(updates.map((update) => [update.id, update.sortOrder]));
+	todos = todos.map((todo) =>
+		sortOrderMap.has(todo.id) ? { ...todo, sort_order: sortOrderMap.get(todo.id) } : todo
+	);
+
+	try {
+		const response = await fetch('/api/todos/reorder', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				listId: currentList.id,
+				updates
+			})
+		});
+
+		if (!response.ok) {
+			await fetchTodos();
+		}
+	} catch (error) {
+		console.error('Failed to reorder todos:', error);
+		await fetchTodos();
+	}
 }
 
 async function handleDrop(event, targetTodo) {
+	if (sortMode !== 'manual') {
+		return;
+	}
 	event.preventDefault();
+	dragOverTopZone = false;
 
 	if (!draggedTodo || !targetTodo || draggedTodo.id === targetTodo.id) {
 		handleDragEnd();
@@ -411,61 +515,88 @@ async function handleDrop(event, targetTodo) {
 		return;
 	}
 
-	const todosList = displayedTodos.filter(t =>
-		(t.parent_todo_id === null) === (draggedTodo.parent_todo_id === null) &&
-		(t.parent_todo_id === draggedTodo.parent_todo_id)
+	const parentId = draggedTodo.parent_todo_id ?? null;
+	const siblings = sortByOrder(
+		todos.filter((todo) => (todo.parent_todo_id ?? null) === parentId)
 	);
 
-	const draggedIndex = todosList.findIndex(t => t.id === draggedTodo.id);
-	const targetIndex = todosList.findIndex(t => t.id === targetTodo.id);
+	const draggedIndex = siblings.findIndex((todo) => todo.id === draggedTodo.id);
+	const targetIndex = siblings.findIndex((todo) => todo.id === targetTodo.id);
 
 	if (draggedIndex === -1 || targetIndex === -1) {
 		handleDragEnd();
 		return;
 	}
 
+	if (draggedIndex === targetIndex) {
+		handleDragEnd();
+		return;
+	}
+
 	// Reorder locally
-	const newOrder = [...todosList];
+	const newOrder = [...siblings];
 	const [removed] = newOrder.splice(draggedIndex, 1);
 	newOrder.splice(targetIndex, 0, removed);
 
-	// Update sort orders
-	const updates = newOrder.map((todo, index) => ({
-		id: todo.id,
-		sortOrder: index,
-		parentId: todo.parent_todo_id
-	}));
-
-	// Update local state optimistically
-	const updatedTodos = displayedTodos.map(todo => {
-		const update = updates.find(u => u.id === todo.id);
-		return update ? { ...todo, sort_order: update.sortOrder } : todo;
-	});
-
-	displayedTodos = updatedTodos;
-
-	// Send to server
-	try {
-		const response = await fetch('/api/todos/reorder', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				listId: currentList.id,
-				updates
-			})
-		});
-
-		if (!response.ok) {
-			// Revert on error
-			await fetchTodos();
-		}
-	} catch (error) {
-		console.error('Failed to reorder todos:', error);
-		await fetchTodos();
-	}
-
+	await submitReorder(newOrder);
 	handleDragEnd();
 }
+
+function handleTopZoneDragOver(event) {
+	if (sortMode !== 'manual') {
+		return;
+	}
+	if (!draggedTodo || draggedTodo.parent_todo_id !== null) {
+		return;
+	}
+	event.preventDefault();
+	dragOverTopZone = true;
+}
+
+function handleTopZoneDragLeave() {
+	dragOverTopZone = false;
+}
+
+async function handleDropAtTop(event) {
+	if (sortMode !== 'manual') {
+		return;
+	}
+	if (!draggedTodo || draggedTodo.parent_todo_id !== null) {
+		handleDragEnd();
+		return;
+	}
+	event.preventDefault();
+	dragOverTopZone = false;
+
+	const parentId = null;
+	const siblings = sortByOrder(
+		todos.filter((todo) => (todo.parent_todo_id ?? null) === parentId)
+	);
+
+	const draggedIndex = siblings.findIndex((todo) => todo.id === draggedTodo.id);
+	if (draggedIndex === -1) {
+		handleDragEnd();
+		return;
+	}
+
+	if (draggedIndex === 0) {
+		handleDragEnd();
+		return;
+	}
+
+	const newOrder = [...siblings];
+	const [removed] = newOrder.splice(draggedIndex, 1);
+	newOrder.unshift(removed);
+
+	await submitReorder(newOrder);
+	handleDragEnd();
+}
+
+$effect(() => {
+	if (sortMode !== 'manual') {
+		handleDragEnd();
+	}
+});
 
 	let cleanupTodoCreated;
 	let cleanupTodoUpdated;
@@ -784,7 +915,6 @@ async function selectList(list) {
 	currentList = list;
 	if (isDifferentList) {
 		expandedTodos = new Set();
-		assignmentFilter = 'all';
 		newTodoAssignee = '';
 	}
 	currentListMembers = [];
@@ -1504,42 +1634,51 @@ setContext('todo-actions', {
 	</div>
 
 	{#if currentList}
-		<div class="filters assignment-filters">
-			<button
-				class:active={assignmentFilter === 'all'}
-				onclick={() => assignmentFilter = 'all'}
-			>
-				All assignees
-			</button>
-			<button
-				class:active={assignmentFilter === 'mine'}
-				onclick={() => assignmentFilter = 'mine'}
-			>
-				Assigned to me
-			</button>
-			<button
-				class:active={assignmentFilter === 'unassigned'}
-				onclick={() => assignmentFilter = 'unassigned'}
-			>
-				Unassigned
-			</button>
+		<div class="sort-toolbar">
+			<div class="sort-inline">
+				<div class="sort-inline-main">
+					<label for="sortModeSelect">Sort by</label>
+					<select id="sortModeSelect" bind:value={sortMode}>
+						<option value="manual">Custom order</option>
+						<option value="priority">Priority (high → low)</option>
+						<option value="dueDate">Due date (soonest first)</option>
+						<option value="created">Recently added</option>
+						<option value="alphabetical">Alphabetical</option>
+						<option value="assigned">Assigned</option>
+					</select>
+				</div>
+				{#if sortMode !== 'manual'}
+					<span class="sort-inline-hint">Return to Custom to drag & drop.</span>
+				{/if}
+			</div>
 		</div>
 	{/if}
 
 	{#if currentList}
 		{#if filteredRootTodos.length}
 			<ul class="todo-list">
+				{#if sortMode === 'manual' && draggedTodo && draggedTodo.parent_todo_id === null}
+					<li
+						class="drop-zone drop-zone-top"
+						ondragover={handleTopZoneDragOver}
+						ondragleave={handleTopZoneDragLeave}
+						ondrop={handleDropAtTop}
+						class:active={dragOverTopZone}
+					>
+						Drop here to move this task to the top
+					</li>
+				{/if}
 				{#each filteredRootTodos as todo (todo.id)}
 					<TodoItem
 						{todo}
 						level={0}
 						currentUserId={data.user.id}
-						onDragStart={handleDragStart}
-						onDragOver={handleDragOver}
-						onDrop={handleDrop}
-						onDragEnd={handleDragEnd}
-						isDragging={draggedTodo?.id === todo.id}
-						isDragOver={dragOverTodo?.id === todo.id}
+						onDragStart={sortMode === 'manual' ? handleDragStart : null}
+						onDragOver={sortMode === 'manual' ? handleDragOver : null}
+						onDrop={sortMode === 'manual' ? handleDrop : null}
+						onDragEnd={sortMode === 'manual' ? handleDragEnd : null}
+						isDragging={sortMode === 'manual' && draggedTodo?.id === todo.id}
+						isDragOver={sortMode === 'manual' && dragOverTodo?.id === todo.id}
 					/>
 				{/each}
 			</ul>
@@ -2316,12 +2455,6 @@ setContext('todo-actions', {
 		justify-content: center;
 	}
 
-	.assignment-filters {
-		margin-top: -0.5rem;
-		margin-bottom: 1.5rem;
-		flex-wrap: wrap;
-	}
-
 	.filters button {
 		padding: 0.5rem 1rem;
 		background-color: #f0f0f0;
@@ -2340,6 +2473,70 @@ setContext('todo-actions', {
 		background-color: white;
 		border-color: var(--color-accent, #4CAF50);
 		color: var(--color-accent, #4CAF50);
+	}
+
+	.sort-toolbar {
+		margin-top: -0.25rem;
+		margin-bottom: 1.5rem;
+		display: flex;
+		justify-content: flex-start;
+	}
+
+	.sort-inline {
+		display: inline-flex;
+		flex-direction: column;
+		gap: 0.4rem;
+		background-color: #f8f9fa;
+		border: 2px solid #e0e0e0;
+		border-radius: 4px;
+		padding: 0.5rem 0.75rem;
+		color: #555;
+		width: fit-content;
+		min-width: 0;
+	}
+
+	.sort-inline-main {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.sort-inline-main label {
+		font-weight: 600;
+		font-size: 0.85rem;
+	}
+
+	.sort-inline-main select {
+		padding: 0.4rem 0.6rem;
+		border: 2px solid #d9d9de;
+		border-radius: 4px;
+		background-color: white;
+		cursor: pointer;
+		font-size: 0.9rem;
+		min-width: 0;
+	}
+
+	.sort-inline-hint {
+		font-size: 0.7rem;
+		color: #777;
+	}
+
+	.drop-zone {
+		list-style: none;
+		margin: 0 0 0.75rem;
+		padding: 0.5rem 1rem;
+		border: 2px dashed transparent;
+		border-radius: 8px;
+		text-align: center;
+		color: var(--color-text-secondary, #666);
+		font-size: 0.85rem;
+		transition: all 0.2s ease;
+	}
+
+	.drop-zone.active {
+		border-color: var(--color-primary, #667eea);
+		background: rgba(102, 126, 234, 0.1);
+		color: var(--color-primary, #667eea);
 	}
 
 
@@ -2963,10 +3160,21 @@ setContext('todo-actions', {
 	:global(body.dark-mode) .assignee-label select,
 	:global(body.dark-mode) .recurrence-select,
 	:global(body.dark-mode) .due-date-field input,
-	:global(body.dark-mode) .reminder-field select {
+	:global(body.dark-mode) .reminder-field select,
+	:global(body.dark-mode) .sort-inline-main select {
 		background-color: #353549;
 		border-color: #404057;
 		color: #e0e0e0;
+	}
+
+	:global(body.dark-mode) .sort-toolbar .sort-inline {
+		background-color: #252538;
+		color: #999;
+		border-color: #353549;
+	}
+
+	:global(body.dark-mode) .sort-inline-hint {
+		color: #888;
 	}
 
 	:global(body.dark-mode) .filters button {

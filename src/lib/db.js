@@ -381,6 +381,25 @@ export function rejectUser(userId) {
   db.prepare('DELETE FROM users WHERE id = ?').run(userId);
 }
 
+export function setUserAdminStatus(userId, isAdmin) {
+  db.prepare('UPDATE users SET is_admin = ? WHERE id = ?').run(isAdmin ? 1 : 0, userId);
+  return getUser(userId);
+}
+
+export function permanentlyDeleteUser(userId) {
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+  db.prepare('DELETE FROM list_members WHERE user_id = ?').run(userId);
+  db.prepare('UPDATE todos SET assigned_to = NULL WHERE assigned_to = ?').run(userId);
+  db.prepare('DELETE FROM todos WHERE user_id = ?').run(userId);
+  db.prepare('DELETE FROM list_invitations WHERE inviter_id = ? OR invitee_id = ?').run(userId, userId);
+  db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+}
+
+export function getAdminCount() {
+  const result = db.prepare('SELECT COUNT(*) as count FROM users WHERE is_admin = 1').get();
+  return result?.count ?? 0;
+}
+
 export function deleteSession(sessionId) {
   db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
 }
