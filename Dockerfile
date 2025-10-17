@@ -36,6 +36,7 @@ RUN npm ci --production && \
 # Copy built app from builder stage
 COPY --from=builder /app/build ./build
 COPY --from=builder /app/static ./static
+COPY --from=builder /app/server.js ./server.js
 
 # Copy source lib directory for database module
 COPY --from=builder /app/src/lib ./src/lib
@@ -76,7 +77,7 @@ echo "Database path: $DB_PATH"
 
 # Switch to the specified user and run the app
 echo "Starting Node.js application..."
-exec su-exec $PUID:$PGID node build
+exec su-exec $PUID:$PGID node server.js
 EOF
 
 RUN chmod +x /app/entrypoint.sh
