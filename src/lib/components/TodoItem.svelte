@@ -116,9 +116,12 @@ let typingUserNotes = $derived.by(() => {
 	let canHaveSubtasks = $derived(level === 0);
 let childTodos = $derived(canHaveSubtasks ? todo?.subtasks ?? [] : []);
 let hasChildren = $derived(childTodos.length > 0);
-const indentVars = {
-	'--indent-level': level
-};
+const isSubtask = $derived(level > 0);
+
+const indentVars = $derived(() => ({
+	'--indent-level': level,
+	'--card-offset': level > 0 ? '1rem' : '0rem'
+}));
 
 const swipeThreshold = 70;
 let isSwiping = $state(false);
@@ -580,6 +583,7 @@ function handleAssigneeKeyDown(event) {
 
 <li
 	class="todo-item"
+	class:subtask-card={isSubtask}
 	style={indentVars}
 	class:completed={todo.completed}
 	class:being-edited={editingUser !== null}
@@ -683,90 +687,95 @@ function handleAssigneeKeyDown(event) {
 				</span>
 			{/if}
 
-			{#if isEditingPriority}
-				<select
-					class="priority-dropdown"
-					value={todo.priority}
-					onchange={(e) => handlePriorityChange(e.currentTarget.value)}
-					onblur={() => isEditingPriority = false}
-				>
-					<option value="high">High priority</option>
-					<option value="medium">Medium priority</option>
-					<option value="low">Low priority</option>
-				</select>
-			{:else}
-				<span
-					class={`priority-badge ${priorityClass(todo.priority)} editable`}
-					onclick={() => isEditingPriority = true}
-					role="button"
-					tabindex={0}
-					onkeydown={(event) => handleActivationKey(event, () => { isEditingPriority = true; })}
-					title="Click to change priority"
-				>
-					{priorityLabel(todo.priority)}
-				</span>
-			{/if}
-
-			{#if isEditingDueDate}
-				<input
-					type="datetime-local"
-					class="due-date-input"
-					value={todo.due_date ? new Date(todo.due_date).toISOString().slice(0, 16) : ''}
-					onchange={handleDueDateChange}
-					onblur={() => isEditingDueDate = false}
-				/>
-			{:else if todo.due_date}
-				<span
-					class="due-date editable"
-					class:overdue-label={todo.overdue}
-					onclick={() => isEditingDueDate = true}
-					role="button"
-					tabindex={0}
-					onkeydown={(event) => handleActivationKey(event, () => { isEditingDueDate = true; })}
-					title="Click to change due date"
-				>
-					⏰ {todo.due_date_label ?? ''}
-				</span>
-			{:else}
-				<button
-					class="add-due-date-btn"
-					onclick={() => isEditingDueDate = true}
-					title="Add due date"
-				>
-				+ Due date
-			</button>
-			{/if}
-
-			{#if isEditingAssignee}
-				<select
-					class="assignee-dropdown"
-					value={assigneeDraft}
-					onchange={handleAssigneeChange}
-					onblur={cancelEditingAssignee}
-					onkeydown={handleAssigneeKeyDown}
-				>
-					<option value="">Unassigned</option>
-					{#each assignmentOptions as member (member.id)}
-						<option value={String(member.id)}>{member.username}</option>
-					{/each}
-				</select>
-			{:else}
-				<button
-					type="button"
-					class="assignee-badge"
-					onclick={startEditingAssignee}
-					onkeydown={(event) => handleActivationKey(event, startEditingAssignee)}
-					title="Click to change assignee"
-				>
-					👤 {assigneeLabel}
-				</button>
-			{/if}
+		<div class="meta-row">
+			<div class="meta-item">
+				{#if isEditingPriority}
+					<select
+						class="priority-dropdown meta-control"
+						value={todo.priority}
+						onchange={(e) => handlePriorityChange(e.currentTarget.value)}
+						onblur={() => isEditingPriority = false}
+					>
+						<option value="high">High priority</option>
+						<option value="medium">Medium priority</option>
+						<option value="low">Low priority</option>
+					</select>
+				{:else}
+					<span
+						class={`priority-badge ${priorityClass(todo.priority)} editable meta-chip`}
+						onclick={() => isEditingPriority = true}
+						role="button"
+						tabindex={0}
+						onkeydown={(event) => handleActivationKey(event, () => { isEditingPriority = true; })}
+						title="Tap to change priority"
+					>
+						{priorityLabel(todo.priority)}
+					</span>
+				{/if}
+			</div>
+			<div class="meta-item">
+				{#if isEditingDueDate}
+					<input
+						type="datetime-local"
+						class="due-date-input meta-control"
+						value={todo.due_date ? new Date(todo.due_date).toISOString().slice(0, 16) : ''}
+						onchange={handleDueDateChange}
+						onblur={() => isEditingDueDate = false}
+					/>
+				{:else if todo.due_date}
+					<button
+						type="button"
+						class={`meta-chip meta-chip--due ${todo.overdue ? 'meta-chip--overdue' : ''}`}
+						onclick={() => isEditingDueDate = true}
+						onkeydown={(event) => handleActivationKey(event, () => { isEditingDueDate = true; })}
+						title="Tap to adjust due date"
+					>
+						⏰ {todo.due_date_label ?? ''}
+					</button>
+				{:else}
+					<button
+						type="button"
+						class="meta-chip meta-chip--ghost add-due-date-btn"
+						onclick={() => isEditingDueDate = true}
+						title="Add due date"
+					>
+						+ Due date
+					</button>
+				{/if}
+			</div>
+			<div class="meta-item">
+				{#if isEditingAssignee}
+					<select
+						class="assignee-dropdown meta-control"
+						value={assigneeDraft}
+						onchange={handleAssigneeChange}
+						onblur={cancelEditingAssignee}
+						onkeydown={handleAssigneeKeyDown}
+					>
+						<option value="">Unassigned</option>
+						{#each assignmentOptions as member (member.id)}
+							<option value={String(member.id)}>{member.username}</option>
+						{/each}
+					</select>
+				{:else}
+					<button
+						type="button"
+						class="assignee-badge meta-chip"
+						onclick={startEditingAssignee}
+						onkeydown={(event) => handleActivationKey(event, startEditingAssignee)}
+						title="Tap to change assignee"
+					>
+						👤 {assigneeLabel}
+					</button>
+				{/if}
+			</div>
 			{#if todo.is_recurring}
-				<span class="recurring-badge">🔄 {todo.recurrence_pattern}</span>
+				<span class="meta-chip meta-chip--recurring">🔄 {todo.recurrence_pattern}</span>
 			{/if}
 			{#if todo.completed && todo.completed_by_username}
-				<span class="completed-by" title="Completed by">✓ {todo.completed_by_username}</span>
+				<span class="meta-chip meta-chip--completed" title="Completed by">✓ {todo.completed_by_username}</span>
 			{/if}
+		</div>
 		</div>
 		<div class="actions-cell">
 		<button
@@ -922,7 +931,8 @@ function handleAssigneeKeyDown(event) {
 
 	.todo-item {
 		list-style: none;
-		margin: var(--todo-item-margin, 0 0 0.75rem 0);
+		margin: var(--todo-item-margin, 0 0 1rem 0);
+		margin-left: var(--card-offset, 0);
 		background: #fafafa;
 		border: 1px solid #e2e6ff;
 		border-radius: 12px;
@@ -932,6 +942,11 @@ function handleAssigneeKeyDown(event) {
 		transition: border-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease, transform 0.2s ease;
 		position: relative;
 		cursor: grab;
+	}
+
+	.todo-item.subtask-card {
+		background: linear-gradient(135deg, #f5f7ff 0%, #fbfcff 100%);
+		border-color: rgba(102, 126, 234, 0.25);
 	}
 
 	.swipe-content {
@@ -1138,7 +1153,7 @@ function handleAssigneeKeyDown(event) {
 		display: grid;
 		grid-template-columns: 26px 26px minmax(0, 1fr) auto;
 		align-items: center;
-		gap: var(--todo-item-gap, 0.5rem);
+	gap: var(--todo-item-gap, 0.75rem);
 		padding-left: calc(var(--indent-size) * var(--indent-level));
 		font-size: var(--todo-item-font-size, 1rem);
 	}
@@ -1171,6 +1186,105 @@ function handleAssigneeKeyDown(event) {
 	.todo-row input[type='checkbox'] {
 		width: 18px;
 		height: 18px;
+	}
+
+	@media (max-width: 640px) {
+		:global(:root) {
+			--indent-size: 1.1rem;
+		}
+
+		.todo-item {
+			padding: 0.85rem 1rem;
+		}
+
+		.todo-row {
+			display: flex;
+			align-items: flex-start;
+			gap: 0.9rem;
+			flex-wrap: nowrap;
+		}
+
+		.todo-row.has-mobile-handle {
+			display: flex;
+		}
+
+		.drag-handle-cell {
+			display: none;
+		}
+
+		.meta-row {
+			flex-direction: column;
+			gap: 0.65rem;
+		}
+
+		.meta-item,
+		.meta-chip,
+		.meta-control {
+			width: 100%;
+		}
+
+		.checkbox-cell {
+			align-self: flex-start;
+			order: 0;
+			margin-top: 0.25rem;
+		}
+
+		.expand-cell {
+			align-self: flex-start;
+			order: 1;
+			margin-top: 0.2rem;
+		}
+
+		.content-cell {
+			order: 2;
+			flex: 1;
+			min-width: 0;
+			display: flex;
+			flex-direction: column;
+			align-items: stretch;
+			gap: 0.65rem;
+		}
+
+		.actions-cell {
+			order: 3;
+			margin-left: auto;
+			display: flex;
+			align-items: center;
+			gap: 0.65rem;
+			padding-top: 0.35rem;
+		}
+
+		.child-list {
+			margin-left: 1.25rem;
+			padding-left: 0.9rem;
+			border-left-width: 1.5px;
+		}
+
+		.subtask-input {
+			margin-left: 1.25rem;
+		}
+
+		.todo-title {
+			white-space: normal;
+			word-break: normal;
+			overflow-wrap: anywhere;
+			font-size: 1.05rem;
+			line-height: 1.5;
+		}
+
+		.priority-badge {
+			font-size: 0.8rem;
+			padding: 0.35rem 0.7rem;
+		}
+
+		.notes-section {
+			padding-left: 0;
+			padding-right: 0;
+		}
+
+		.subtask-summary {
+			margin-top: 0.85rem;
+		}
 	}
 
 	.expand-cell {
@@ -1236,6 +1350,99 @@ function handleAssigneeKeyDown(event) {
 		border-color: #5568d3;
 	}
 
+	.meta-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem;
+		margin-top: 0.6rem;
+	}
+
+	.meta-item {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		min-width: 0;
+	}
+
+	.meta-control {
+		width: 100%;
+		min-width: 0;
+		padding: 0.5rem 0.6rem;
+		border-radius: 8px;
+		border: 2px solid #e5e7eb;
+		font-size: 0.9rem;
+		font-weight: 500;
+		background: #ffffff;
+	}
+
+	.meta-control:focus {
+		outline: none;
+		border-color: #94a3f5;
+		box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+	}
+
+	.meta-chip {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.35rem;
+		padding: 0.45rem 0.9rem;
+		border-radius: 999px;
+		background: #f0f3ff;
+		color: #2c3e66;
+		border: 1px solid rgba(99, 102, 241, 0.25);
+		font-size: 0.82rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: transform 0.15s ease, box-shadow 0.15s ease;
+	}
+
+	.meta-chip:hover {
+		transform: translateY(-1px);
+		box-shadow: 0 6px 15px rgba(15, 23, 42, 0.1);
+	}
+
+	.meta-chip:focus-visible {
+		outline: 2px solid rgba(99, 102, 241, 0.5);
+		outline-offset: 2px;
+	}
+
+	.meta-chip--ghost {
+		background: transparent;
+		border-style: dashed;
+		color: #3b5bfd;
+	}
+
+	.meta-chip--due {
+		background: #eef6ff;
+		border-color: #bfdbfe;
+		color: #1d4ed8;
+	}
+
+	.meta-chip--overdue {
+		background: #ffe4e6;
+		border-color: #fca5a5;
+		color: #b91c1c;
+	}
+
+	.meta-chip--recurring {
+		background: #ecfdf5;
+		border-color: #99f6e4;
+		color: #047857;
+	}
+
+	.meta-chip--completed {
+		background: #e9f7ef;
+		border-color: #a7f3d0;
+		color: #0f766e;
+	}
+
+	.todo-item.subtask-card .meta-chip {
+		background: rgba(99, 102, 241, 0.12);
+		border-color: rgba(99, 102, 241, 0.2);
+		color: #364571;
+	}
+
 	.todo-item.completed .todo-title {
 		text-decoration: line-through;
 		color: #888;
@@ -1275,30 +1482,12 @@ function handleAssigneeKeyDown(event) {
 		border-color: #5568d3;
 	}
 
-	.assignee-badge {
-		padding: 0.3rem 0.7rem;
-		border-radius: 999px;
-		background: #eef4ff;
-		color: #4656a6;
-		border: 1px solid #d4dcff;
-		font-size: 0.78rem;
-		font-weight: 600;
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3rem;
-		cursor: pointer;
-		transition: background 0.2s ease, transform 0.2s ease;
-	}
-
-	.assignee-badge:hover {
-		background: #dde7ff;
-		transform: translateY(-1px);
-	}
-
-	.assignee-badge:focus-visible {
-		outline: 2px solid #5568d3;
-		outline-offset: 2px;
-	}
+.assignee-badge {
+	border: none;
+	background: transparent;
+	padding: 0;
+	font: inherit;
+}
 
 	.assignee-dropdown {
 		padding: 0.3rem 0.6rem;
@@ -1796,6 +1985,11 @@ function handleAssigneeKeyDown(event) {
 		box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
 	}
 
+	:global(body.dark-mode) .todo-item.subtask-card {
+		background: rgba(24, 32, 56, 0.92);
+		border-color: rgba(148, 163, 196, 0.35);
+	}
+
 	:global(body.dark-mode) .todo-title {
 		color: #e0e0e0;
 	}
@@ -1839,6 +2033,41 @@ function handleAssigneeKeyDown(event) {
 	:global(body.dark-mode) .completed-by {
 		background: #2a4a34;
 		color: #6dd98a;
+	}
+
+	:global(body.dark-mode) .meta-chip {
+		background: rgba(99, 102, 241, 0.18);
+		border-color: rgba(129, 140, 248, 0.35);
+		color: #e0e7ff;
+	}
+
+	:global(body.dark-mode) .meta-chip--ghost {
+		border-color: rgba(129, 140, 248, 0.45);
+		color: #cbd5ff;
+	}
+
+	:global(body.dark-mode) .meta-chip--due {
+		background: rgba(59, 130, 246, 0.2);
+		border-color: rgba(147, 197, 253, 0.4);
+		color: #bfdbfe;
+	}
+
+	:global(body.dark-mode) .meta-chip--overdue {
+		background: rgba(248, 113, 113, 0.22);
+		border-color: rgba(252, 165, 165, 0.4);
+		color: #fecaca;
+	}
+
+	:global(body.dark-mode) .meta-chip--recurring {
+		background: rgba(52, 211, 153, 0.2);
+		border-color: rgba(110, 231, 183, 0.4);
+		color: #bbf7d0;
+	}
+
+	:global(body.dark-mode) .meta-chip--completed {
+		background: rgba(16, 185, 129, 0.2);
+		border-color: rgba(52, 211, 153, 0.4);
+		color: #6ee7b7;
 	}
 
 	:global(body.dark-mode) .priority-high {

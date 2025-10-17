@@ -42,6 +42,7 @@ let showInvitationsModal = $state(false);
 let showRecentlyDeletedModal = $state(false);
 let showSettingsModal = $state(false);
 let showArchivedListsModal = $state(false);
+let showMobileMenu = $state(false);
 let newListName = $state('');
 let inviteUsername = $state('');
 let invitePermission = $state('editor');
@@ -91,6 +92,7 @@ let isVoiceActive = $state(false);
 let voiceError = $state('');
 
 let cameraInputEl = $state(null);
+let newTodoInputEl;
 let mainContentEl;
 const todoElementRegistry = new Map();
 
@@ -122,6 +124,10 @@ $effect(() => {
 		closeMobileActionSheet();
 	}
 });
+
+let totalTodoCount = $derived(() => todos.length);
+let activeTodoCount = $derived(() => todos.filter((todo) => !todo.completed).length);
+let completedTodoCount = $derived(() => todos.filter((todo) => todo.completed).length);
 
 function resolvePriorityKey(value) {
 	if (!value) return 'medium';
@@ -374,6 +380,17 @@ async function handleCameraCapture(event) {
 	} catch (error) {
 		console.error('Camera capture failed', error);
 		alert(error.message ?? 'Unable to capture photo');
+	}
+}
+
+function handleMobileListChange(event) {
+	const selectedId = Number(event.currentTarget.value);
+	if (!Number.isFinite(selectedId)) {
+		return;
+	}
+	const target = lists.find((list) => list.id === selectedId);
+	if (target) {
+		selectList(target);
 	}
 }
 
@@ -2128,15 +2145,19 @@ setContext('mobile-dnd', {
 	<title>Tido</title>
 </svelte:head>
 
+
 <div class="app-container">
+{#if !isMobile}
 	<!-- Sidebar for lists -->
-	<div class="sidebar">
+	<div id="sidebar-nav" class="sidebar">
 		<div class="sidebar-header">
 			<div class="sidebar-logo-section">
 				<img src="/tido-logo.png" alt="Tido Logo" class="sidebar-logo" />
 				<h2>My Lists</h2>
 			</div>
-			<button class="icon-btn" onclick={() => showNewListModal = true} title="Create new list">+</button>
+			<div class="sidebar-header-actions">
+				<button class="icon-btn" onclick={() => showNewListModal = true} title="Create new list" aria-label="Create new list">+</button>
+			</div>
 		</div>
 
 		<button class="settings-btn" onclick={() => showSettingsModal = true} title="Settings">
@@ -2173,10 +2194,11 @@ setContext('mobile-dnd', {
 			Archived Lists
 		</button>
 	</div>
+{/if}
 
 	<!-- Main content -->
 	<div
-	class="main-content"
+	class={['main-content', isMobile && 'main-content-mobile']}
 	bind:this={mainContentEl}
 	style={`transform: translateY(${isMobile ? pullOffset : 0}px); --pull-offset: ${pullOffset}px;`}
 	class:pulling={isPulling || isRefreshing}
@@ -2190,14 +2212,25 @@ setContext('mobile-dnd', {
 			</div>
 		{/if}
 		<div class="header">
-			<div class="user-info">
-				<span class="welcome">Welcome, <strong>{data.user.username}</strong>!</span>
-				{#if data.user.is_admin}
-					<a href="/admin" class="admin-link">Admin Dashboard</a>
-				{/if}
-				<div class="connection-status" class:connected={$connectionState === 'connected'} class:disconnected={$connectionState === 'disconnected'} class:error={$connectionState === 'error'} title="Connection status: {$connectionState}">
-					<span class="status-dot"></span>
-					<span class="status-text">{$connectionState === 'connected' ? 'Connected' : $connectionState === 'disconnected' ? 'Disconnected' : 'Error'}</span>
+			{#if isMobile}
+				<button class="mobile-menu-btn" onclick={() => showMobileMenu = true} aria-label="Open menu">
+					<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<line x1="3" y1="6" x2="21" y2="6"></line>
+						<line x1="3" y1="12" x2="21" y2="12"></line>
+						<line x1="3" y1="18" x2="21" y2="18"></line>
+					</svg>
+				</button>
+			{/if}
+			<div class="header-left">
+				<div class="user-info">
+					<span class="welcome">Welcome, <strong>{data.user.username}</strong>!</span>
+					{#if data.user.is_admin}
+						<a href="/admin" class="admin-link">Admin Dashboard</a>
+					{/if}
+					<div class="connection-status" class:connected={$connectionState === 'connected'} class:disconnected={$connectionState === 'disconnected'} class:error={$connectionState === 'error'} title="Connection status: {$connectionState}">
+						<span class="status-dot"></span>
+						<span class="status-text">{$connectionState === 'connected' ? 'Connected' : $connectionState === 'disconnected' ? 'Disconnected' : 'Error'}</span>
+					</div>
 				</div>
 			</div>
 			<div class="header-actions">
@@ -2208,7 +2241,64 @@ setContext('mobile-dnd', {
 			</div>
 		</div>
 
-		{#if currentList}
+		{#if isMobile}
+			<div class="mobile-header-controls">
+				<div class="mobile-list-select">
+					<label for="mobile-list">Current list</label>
+					<select id="mobile-list" onchange={handleMobileListChange} aria-label="Select active list">
+						{#if !currentList}
+							<option value="" disabled selected>Select a list</option>
+						{/if}
+						{#each lists as list (list.id)}
+							<option value={list.id} selected={currentList?.id === list.id}>{list.name}</option>
+						{/each}
+					</select>
+				</div>
+			</div>
+		{/if}
+
+	{#if currentList}
+		{#if isMobile}
+			<section class="mobile-hero">
+				<div class="mobile-hero-heading">
+					<h1>{currentList.name}</h1>
+					<p class="mobile-hero-caption">
+						{currentList.member_count === 1 ? 'Personal list' : `${currentList.member_count} members`} · {activeTodoCount} active · {completedTodoCount} done
+					</p>
+				</div>
+				<div class="mobile-hero-stats">
+					<span class="mobile-stat-chip">
+						<strong>{activeTodoCount}</strong>
+						<span>Active</span>
+					</span>
+					<span class="mobile-stat-chip">
+						<strong>{completedTodoCount}</strong>
+						<span>Done</span>
+					</span>
+					<span class="mobile-stat-chip">
+						<strong>{totalTodoCount}</strong>
+						<span>Total</span>
+					</span>
+				</div>
+				<div class="mobile-quick-actions">
+					<button type="button" class="mobile-action primary" onclick={() => { newTodoInputEl?.focus(); }}>
+						<span>+ Task</span>
+					</button>
+					<button type="button" class="mobile-action" onclick={() => showCalendarModal = true}>
+						<span>Calendar</span>
+					</button>
+					<button type="button" class="mobile-action" onclick={openRecentlyDeleted}>
+						<span>Deleted</span>
+					</button>
+				</div>
+				{#if currentList.permission_level === 'admin' && !(currentList.name === 'My Tasks' && currentList.member_count === 1)}
+					<div class="mobile-secondary-actions">
+						<button type="button" onclick={() => showInviteModal = true}>Invite</button>
+						<button type="button" onclick={archiveCurrentList}>Archive</button>
+					</div>
+				{/if}
+			</section>
+		{:else}
 			<div class="list-header">
 				<h1>{currentList.name}</h1>
 				<div class="list-actions">
@@ -2228,16 +2318,18 @@ setContext('mobile-dnd', {
 					{/if}
 				</div>
 			</div>
-		{:else}
-			<h1>No lists available</h1>
-			<p>Create a new list to get started!</p>
 		{/if}
+	{:else}
+		<h1>No lists available</h1>
+		<p>Create a new list to get started!</p>
+	{/if}
 
 	<div class="input-section">
 		<div class="input-with-tools">
 			<input
 				type="text"
 				bind:value={newTodoText}
+				bind:this={newTodoInputEl}
 				onkeypress={handleKeyPress}
 				placeholder="What needs to be done?"
 				autocomplete="off"
@@ -2348,25 +2440,27 @@ setContext('mobile-dnd', {
 		</div>
 	{/if}
 
-	<div class="filters">
-		<button
-			class:active={filter === 'all'}
-			onclick={() => filter = 'all'}
-		>
-			All
-		</button>
-		<button
-			class:active={filter === 'active'}
-			onclick={() => filter = 'active'}
-		>
-			Active
-		</button>
-		<button
-			class:active={filter === 'completed'}
-			onclick={() => filter = 'completed'}
-		>
-			Completed
-		</button>
+	<div class="filters-scroll">
+		<div class="filters">
+			<button
+				class:active={filter === 'all'}
+				onclick={() => filter = 'all'}
+			>
+				All
+			</button>
+			<button
+				class:active={filter === 'active'}
+				onclick={() => filter = 'active'}
+			>
+				Active
+			</button>
+			<button
+				class:active={filter === 'completed'}
+				onclick={() => filter = 'completed'}
+			>
+				Completed
+			</button>
+		</div>
 	</div>
 
 	{#if currentList}
@@ -2806,22 +2900,91 @@ setContext('mobile-dnd', {
 	</div>
 {/if}
 
+{#if showMobileMenu}
+	<div class="mobile-menu-overlay" onclick={() => showMobileMenu = false}>
+		<nav class="mobile-menu" onclick={(e) => e.stopPropagation()}>
+			<div class="mobile-menu-header">
+				<div class="mobile-menu-logo">
+					<img src="/tido-logo.png" alt="Tido Logo" class="mobile-menu-logo-img" />
+					<h2>Tido</h2>
+				</div>
+				<button class="mobile-menu-close" onclick={() => showMobileMenu = false} aria-label="Close menu">
+					<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<line x1="18" y1="6" x2="6" y2="18"></line>
+						<line x1="6" y1="6" x2="18" y2="18"></line>
+					</svg>
+				</button>
+			</div>
+
+			<div class="mobile-menu-section">
+				<h3>My Lists</h3>
+				<div class="mobile-menu-lists">
+					{#each lists as list (list.id)}
+						<button
+							class="mobile-menu-list-item"
+							class:active={currentList?.id === list.id}
+							onclick={() => { selectList(list); showMobileMenu = false; }}
+						>
+							<span class="mobile-menu-list-name">{list.name}</span>
+							{#if list.member_count > 1}
+								<span class="mobile-menu-member-count">{list.member_count}</span>
+							{/if}
+						</button>
+					{/each}
+				</div>
+				<button class="mobile-menu-action-btn" onclick={() => { showNewListModal = true; showMobileMenu = false; }}>
+					+ Create New List
+				</button>
+			</div>
+
+			{#if invitations.length > 0}
+				<button class="mobile-menu-invitations" onclick={() => { showInvitationsModal = true; showMobileMenu = false; }}>
+					Invitations ({invitations.length})
+				</button>
+			{/if}
+
+			<div class="mobile-menu-section">
+				<button class="mobile-menu-action-btn" onclick={() => { fetchArchivedLists(); showArchivedListsModal = true; showMobileMenu = false; }}>
+					Archived Lists
+				</button>
+				<button class="mobile-menu-action-btn" onclick={() => { showSettingsModal = true; showMobileMenu = false; }}>
+					⚙️ Settings
+				</button>
+			</div>
+		</nav>
+	</div>
+{/if}
+
 <style>
-	:global(body) {
-		margin: 0;
-		padding: 0;
-		/* Fallback for when CSS variable isn't set yet (Aurora theme) */
-		background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 33%, #06b6d4 66%, #10b981 100%);
-		background-image: var(--color-background);
-		background-attachment: fixed;
-		min-height: 100vh;
-		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-	}
+:global(html) {
+	box-sizing: border-box;
+	width: 100%;
+}
+
+:global(*),
+:global(*::before),
+:global(*::after) {
+	box-sizing: inherit;
+}
+
+:global(body) {
+	margin: 0;
+	padding: 0;
+	/* Fallback for when CSS variable isn't set yet (Aurora theme) */
+	background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 33%, #06b6d4 66%, #10b981 100%);
+	background-image: var(--color-background);
+	background-attachment: fixed;
+	min-height: 100vh;
+	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+	overflow-x: hidden;
+}
 
 	.app-container {
 		display: flex;
 		min-height: 100vh;
 		gap: 0;
+		width: 100%;
+		overflow-x: hidden;
 	}
 
 	.sidebar {
@@ -2840,6 +3003,12 @@ setContext('mobile-dnd', {
 		justify-content: space-between;
 		align-items: center;
 		margin-bottom: 1rem;
+	}
+
+	.sidebar-header-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 	}
 
 	.sidebar-header h2 {
@@ -2877,6 +3046,16 @@ setContext('mobile-dnd', {
 
 	.icon-btn:hover {
 		background: var(--color-primary-hover, #5568d3);
+	}
+
+	.main-content-mobile {
+		max-width: none;
+		margin: 0;
+		width: 100%;
+		border-radius: 0;
+		box-shadow: none;
+		padding: 1.25rem 1rem 3rem;
+		box-sizing: border-box;
 	}
 
 	.lists {
@@ -2971,6 +3150,123 @@ setContext('mobile-dnd', {
 		background: #ff5252;
 	}
 
+	@media (max-width: 1024px) {
+		.app-container {
+			flex-direction: column;
+		}
+
+		.sidebar-header-actions .icon-btn {
+			width: 36px;
+			height: 36px;
+		}
+
+		.main-content {
+			max-width: none;
+			margin: 0;
+			width: 100%;
+			border-radius: 0;
+			box-shadow: none;
+			padding: 1.25rem 1rem 3rem;
+		}
+
+		.header {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 1rem;
+		}
+
+		.header-left {
+			width: 100%;
+		}
+
+		.header-actions {
+			width: 100%;
+			justify-content: flex-start;
+			gap: 0.75rem;
+		}
+
+		.user-info {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.5rem;
+		}
+
+		.list-actions {
+			flex-wrap: wrap;
+			gap: 0.5rem;
+		}
+
+		.input-section {
+			flex-direction: column;
+			align-items: stretch;
+			gap: 0.85rem;
+		}
+
+		.input-section button {
+			width: 100%;
+		}
+
+		.filters-scroll {
+			overflow-x: auto;
+			-webkit-overflow-scrolling: touch;
+			padding-bottom: 0.5rem;
+		}
+
+		.filters {
+			flex-wrap: nowrap;
+			gap: 0.65rem;
+			justify-content: flex-start;
+		}
+
+		.filters button {
+			flex: 0 0 auto;
+		}
+
+		.task-options-row,
+		.recurring-options,
+		.due-date-options {
+			flex-direction: column;
+			align-items: stretch;
+			gap: 0.75rem;
+		}
+
+		.todo-list {
+			padding-bottom: 1.5rem;
+		}
+	}
+
+	@media (max-width: 640px) {
+		.header {
+			gap: 0.75rem;
+		}
+
+		.mobile-header-controls {
+			margin-bottom: 1rem;
+		}
+
+		h1 {
+			text-align: left;
+			font-size: 2.2rem;
+		}
+
+		.list-header {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.75rem;
+		}
+
+		.list-header h1 {
+			font-size: 2.15rem;
+		}
+
+		.sort-toolbar {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.75rem;
+		}
+
+	}
+
 	.main-content {
 		flex: 1;
 		max-width: 800px;
@@ -2984,6 +3280,8 @@ setContext('mobile-dnd', {
 		transition: transform 0.2s ease;
 		will-change: transform;
 		touch-action: pan-y;
+		box-sizing: border-box;
+		line-height: 1.6;
 	}
 
 	.main-content.pulling {
@@ -3170,6 +3468,16 @@ setContext('mobile-dnd', {
 		margin-bottom: 1.5rem;
 		padding-bottom: 1rem;
 		border-bottom: 1px solid #e0e0e0;
+		gap: 1.5rem;
+		flex-wrap: wrap;
+	}
+
+	.header-left {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		flex: 1;
+		min-width: 0;
 	}
 
 	.user-info {
@@ -3245,6 +3553,36 @@ setContext('mobile-dnd', {
 		gap: 0.75rem;
 	}
 
+	.mobile-header-controls {
+		display: flex;
+		width: 100%;
+		margin-bottom: 1.25rem;
+	}
+
+	.mobile-list-select {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+		width: 100%;
+	}
+
+	.mobile-list-select label {
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: #4b5563;
+	}
+
+	.mobile-list-select select {
+		padding: 0.65rem 0.75rem;
+		border: 2px solid #d1d5db;
+		border-radius: 8px;
+		font-size: 1rem;
+		font-weight: 500;
+		background-color: #fff;
+		color: #1f2937;
+		box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+	}
+
 	.theme-toggle {
 		padding: 0.5rem;
 		background-color: #f0f0f0;
@@ -3306,15 +3644,109 @@ setContext('mobile-dnd', {
 
 	.input-section {
 		display: flex;
-		gap: 0.5rem;
+		gap: 0.75rem;
 		margin-bottom: 0.75rem;
+	}
+
+	.mobile-hero {
+		display: flex;
+		flex-direction: column;
+		gap: 1.15rem;
+		margin-bottom: 1.75rem;
+	}
+
+	.mobile-hero-heading h1 {
+		margin: 0;
+		font-size: 2.25rem;
+		line-height: 1.2;
+		color: var(--color-text, #1f2937);
+	}
+
+	.mobile-hero-caption {
+		margin: 0;
+		color: #6b7280;
+		font-size: 0.9rem;
+	}
+
+	.mobile-hero-stats {
+		display: flex;
+		gap: 0.65rem;
+		flex-wrap: wrap;
+	}
+
+	.mobile-stat-chip {
+		display: inline-flex;
+		flex-direction: column;
+		gap: 0.15rem;
+		padding: 0.6rem 0.9rem;
+		border-radius: 12px;
+		background: rgba(99, 102, 241, 0.08);
+		border: 1px solid rgba(99, 102, 241, 0.18);
+		min-width: 96px;
+	}
+
+	.mobile-stat-chip strong {
+		font-size: 1.05rem;
+		color: #1f2937;
+	}
+
+	.mobile-stat-chip span {
+		font-size: 0.72rem;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: #525a79;
+	}
+
+	.mobile-quick-actions {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+		gap: 0.75rem;
+	}
+
+	.mobile-action {
+		border: none;
+		border-radius: 14px;
+		padding: 0.9rem 1rem;
+		background: #eef2ff;
+		color: #36458a;
+		font-weight: 600;
+		font-size: 1rem;
+		box-shadow: 0 6px 14px rgba(59, 70, 180, 0.12);
+		transition: transform 0.15s ease, box-shadow 0.15s ease;
+	}
+
+	.mobile-action:hover {
+		transform: translateY(-1px);
+		box-shadow: 0 10px 22px rgba(59, 70, 180, 0.16);
+	}
+
+	.mobile-action.primary {
+		background: linear-gradient(135deg, #6366f1 0%, #818cf8 100%);
+		color: #fff;
+	}
+
+	.mobile-secondary-actions {
+		display: flex;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+	}
+
+	.mobile-secondary-actions button {
+		border: 1px solid rgba(148, 163, 184, 0.45);
+		background: rgba(243, 244, 246, 0.72);
+		border-radius: 999px;
+		padding: 0.45rem 1rem;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: #374151;
 	}
 
 	.input-with-tools {
 		display: flex;
 		align-items: center;
-		gap: 0.5rem;
+		gap: 0.75rem;
 		flex: 1;
+		min-width: 0;
 	}
 
 	.input-with-tools input {
@@ -3424,9 +3856,23 @@ setContext('mobile-dnd', {
 
 	.filters {
 		display: flex;
-		gap: 0.5rem;
+		gap: 0.75rem;
 		margin-bottom: 1rem;
 		justify-content: center;
+		flex-wrap: wrap;
+	}
+
+	.filters-scroll {
+		width: 100%;
+	}
+
+	.todo-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 1.25rem;
 	}
 
 	.filters button {
@@ -3434,9 +3880,10 @@ setContext('mobile-dnd', {
 		background-color: #f0f0f0;
 		color: #333;
 		border: 2px solid transparent;
-		border-radius: 4px;
+		border-radius: 999px;
 		cursor: pointer;
 		transition: all 0.2s;
+		font-weight: 600;
 	}
 
 	.filters button:hover {
@@ -4131,6 +4578,49 @@ setContext('mobile-dnd', {
 		border-color: #4CAF50;
 	}
 
+	:global(body.dark-mode) .mobile-hero-caption {
+		color: #a5acc7;
+	}
+
+	:global(body.dark-mode) .mobile-stat-chip {
+		background: rgba(99, 102, 241, 0.18);
+		border-color: rgba(129, 140, 248, 0.3);
+	}
+
+	:global(body.dark-mode) .mobile-stat-chip strong {
+		color: #f1f5ff;
+	}
+
+	:global(body.dark-mode) .mobile-stat-chip span {
+		color: #c7d2fe;
+	}
+
+	:global(body.dark-mode) .mobile-action {
+		background: rgba(61, 74, 118, 0.55);
+		color: #e4e7ff;
+		box-shadow: 0 8px 20px rgba(15, 23, 42, 0.45);
+	}
+
+	:global(body.dark-mode) .mobile-action.primary {
+		background: linear-gradient(135deg, #4c51bf 0%, #6366f1 100%);
+	}
+
+	:global(body.dark-mode) .mobile-secondary-actions button {
+		background: rgba(55, 65, 81, 0.7);
+		border-color: rgba(148, 163, 184, 0.3);
+		color: #e5e7eb;
+	}
+
+	:global(body.dark-mode) .mobile-list-select label {
+		color: #cbd5f5;
+	}
+
+	:global(body.dark-mode) .mobile-list-select select {
+		background: #162036;
+		border-color: #334155;
+		color: #e2e8f0;
+	}
+
 	:global(body.dark-mode) .voice-error {
 		color: #fca5a5;
 	}
@@ -4352,5 +4842,474 @@ setContext('mobile-dnd', {
 	:global(body.dark-mode) .archived-list-info .member-count,
 	:global(body.dark-mode) .archived-list-info .archived-date {
 		color: #999;
+	}
+
+	/* Mobile Navigation Menu */
+	.mobile-menu-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.75rem;
+		background: transparent;
+		border: none;
+		cursor: pointer;
+		color: var(--color-text, #2c3e50);
+		min-width: 44px;
+		min-height: 44px;
+		border-radius: 8px;
+		transition: background 0.2s;
+	}
+
+	.mobile-menu-btn:hover {
+		background: rgba(0, 0, 0, 0.05);
+	}
+
+	:global(body.dark-mode) .mobile-menu-btn {
+		color: #e0e0e0;
+	}
+
+	:global(body.dark-mode) .mobile-menu-btn:hover {
+		background: rgba(255, 255, 255, 0.05);
+	}
+
+	.mobile-menu-overlay {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background: rgba(0, 0, 0, 0.5);
+		z-index: 1000;
+		animation: fadeIn 0.2s ease-out;
+	}
+
+	@keyframes fadeIn {
+		from { opacity: 0; }
+		to { opacity: 1; }
+	}
+
+	@keyframes slideIn {
+		from { transform: translateX(-100%); }
+		to { transform: translateX(0); }
+	}
+
+	.mobile-menu {
+		position: fixed;
+		top: 0;
+		left: 0;
+		bottom: 0;
+		width: 85%;
+		max-width: 320px;
+		background: white;
+		overflow-y: auto;
+		animation: slideIn 0.3s ease-out;
+		box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+	}
+
+	:global(body.dark-mode) .mobile-menu {
+		background: #1e1e2e;
+	}
+
+	.mobile-menu-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 1.5rem 1rem;
+		border-bottom: 1px solid #e9ecef;
+	}
+
+	:global(body.dark-mode) .mobile-menu-header {
+		border-bottom-color: #333;
+	}
+
+	.mobile-menu-logo {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.mobile-menu-logo-img {
+		width: 32px;
+		height: 32px;
+		object-fit: contain;
+	}
+
+	.mobile-menu-logo h2 {
+		margin: 0;
+		font-size: 1.25rem;
+		color: var(--color-text, #2c3e50);
+	}
+
+	:global(body.dark-mode) .mobile-menu-logo h2 {
+		color: #e0e0e0;
+	}
+
+	.mobile-menu-close {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.5rem;
+		background: transparent;
+		border: none;
+		cursor: pointer;
+		color: var(--color-text, #2c3e50);
+		min-width: 44px;
+		min-height: 44px;
+		border-radius: 8px;
+		transition: background 0.2s;
+	}
+
+	.mobile-menu-close:hover {
+		background: rgba(0, 0, 0, 0.05);
+	}
+
+	:global(body.dark-mode) .mobile-menu-close {
+		color: #e0e0e0;
+	}
+
+	:global(body.dark-mode) .mobile-menu-close:hover {
+		background: rgba(255, 255, 255, 0.05);
+	}
+
+	.mobile-menu-section {
+		padding: 1rem;
+		border-bottom: 1px solid #e9ecef;
+	}
+
+	:global(body.dark-mode) .mobile-menu-section {
+		border-bottom-color: #333;
+	}
+
+	.mobile-menu-section h3 {
+		margin: 0 0 0.75rem 0;
+		font-size: 0.875rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: #666;
+		font-weight: 600;
+	}
+
+	:global(body.dark-mode) .mobile-menu-section h3 {
+		color: #999;
+	}
+
+	.mobile-menu-lists {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		margin-bottom: 1rem;
+	}
+
+	.mobile-menu-list-item {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 0.875rem;
+		background: #f8f9fa;
+		border: 2px solid transparent;
+		border-radius: 8px;
+		cursor: pointer;
+		transition: all 0.2s;
+		text-align: left;
+		min-height: 48px;
+		width: 100%;
+	}
+
+	.mobile-menu-list-item:hover {
+		background: #e9ecef;
+	}
+
+	.mobile-menu-list-item.active {
+		background: white;
+		border-color: var(--color-primary, #667eea);
+	}
+
+	:global(body.dark-mode) .mobile-menu-list-item {
+		background: #252538;
+		color: #e0e0e0;
+	}
+
+	:global(body.dark-mode) .mobile-menu-list-item:hover {
+		background: #2d2d44;
+	}
+
+	:global(body.dark-mode) .mobile-menu-list-item.active {
+		background: #1e1e2e;
+		border-color: var(--color-primary, #667eea);
+	}
+
+	.mobile-menu-list-name {
+		font-weight: 500;
+		color: var(--color-text, #2c3e50);
+	}
+
+	:global(body.dark-mode) .mobile-menu-list-name {
+		color: #e0e0e0;
+	}
+
+	.mobile-menu-member-count {
+		background: var(--color-primary, #667eea);
+		color: white;
+		padding: 0.25rem 0.5rem;
+		border-radius: 12px;
+		font-size: 0.75rem;
+		font-weight: 600;
+	}
+
+	.mobile-menu-action-btn {
+		width: 100%;
+		padding: 0.875rem;
+		background: #f8f9fa;
+		color: var(--color-text, #2c3e50);
+		border: 2px solid transparent;
+		border-radius: 8px;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.2s;
+		min-height: 48px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		margin-top: 0.5rem;
+	}
+
+	.mobile-menu-action-btn:hover {
+		background: #e9ecef;
+		border-color: var(--color-primary, #667eea);
+		color: var(--color-primary, #667eea);
+	}
+
+	:global(body.dark-mode) .mobile-menu-action-btn {
+		background: #252538;
+		color: #e0e0e0;
+	}
+
+	:global(body.dark-mode) .mobile-menu-action-btn:hover {
+		background: #2d2d44;
+		border-color: var(--color-primary, #667eea);
+		color: var(--color-primary, #667eea);
+	}
+
+	.mobile-menu-invitations {
+		width: 100%;
+		padding: 0.875rem;
+		background: #ff6b6b;
+		color: white;
+		border: none;
+		border-radius: 8px;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 0.2s;
+		min-height: 48px;
+		margin: 1rem;
+		margin-bottom: 0;
+	}
+
+	.mobile-menu-invitations:hover {
+		background: #ff5252;
+	}
+
+	/* Mobile Touch Target Improvements */
+	@media (max-width: 768px) {
+		/* Ensure all interactive elements are at least 44x44px */
+		button, .icon-btn, .filter-btn, .sort-btn {
+			min-height: 44px;
+			min-width: 44px;
+			padding: 0.75rem 1rem;
+		}
+
+		.theme-toggle, .logout-btn {
+			min-height: 44px;
+			padding: 0.75rem 1.25rem;
+		}
+
+		input[type="text"], input[type="email"], input[type="password"],
+		input[type="date"], input[type="time"], select, textarea {
+			min-height: 48px;
+			padding: 0.875rem 1rem;
+			font-size: 16px; /* Prevents iOS zoom on focus */
+		}
+
+		/* Make modals full-screen on mobile */
+		.modal {
+			position: fixed;
+			top: 0;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			max-width: 100%;
+			max-height: 100%;
+			width: 100%;
+			height: 100%;
+			border-radius: 0;
+			margin: 0;
+			overflow-y: auto;
+			-webkit-overflow-scrolling: touch;
+		}
+
+		.modal h2 {
+			position: sticky;
+			top: 0;
+			background: white;
+			z-index: 1;
+			padding: 1.5rem;
+			margin: -1.5rem -1.5rem 1rem -1.5rem;
+			border-bottom: 1px solid #e9ecef;
+		}
+
+		:global(body.dark-mode) .modal h2 {
+			background: #1e1e2e;
+			border-bottom-color: #333;
+		}
+
+		.modal-actions {
+			position: sticky;
+			bottom: 0;
+			background: white;
+			padding: 1rem 1.5rem;
+			margin: 1rem -1.5rem -1.5rem -1.5rem;
+			border-top: 1px solid #e9ecef;
+		}
+
+		:global(body.dark-mode) .modal-actions {
+			background: #1e1e2e;
+			border-top-color: #333;
+		}
+
+		/* Improve header layout on mobile */
+		.header {
+			display: flex;
+			flex-wrap: wrap;
+			align-items: center;
+			gap: 0.75rem;
+			padding: 1rem;
+		}
+
+		.header-left {
+			flex: 1;
+			min-width: 0;
+		}
+
+		.user-info {
+			display: flex;
+			flex-direction: column;
+			gap: 0.5rem;
+		}
+
+		.welcome {
+			font-size: 0.9rem;
+		}
+
+		.connection-status {
+			font-size: 0.8rem;
+		}
+
+		/* Better spacing for mobile */
+		.main-content {
+			padding: 1rem;
+		}
+
+		.input-section {
+			gap: 1rem;
+		}
+
+		.input-with-tools {
+			position: relative;
+			display: flex;
+			gap: 0.5rem;
+			width: 100%;
+		}
+
+		.input-with-tools input {
+			flex: 1;
+		}
+
+		/* Improve list actions on mobile */
+		.list-actions button {
+			white-space: nowrap;
+			font-size: 0.875rem;
+		}
+
+		/* Better mobile select styling */
+		.mobile-list-select {
+			width: 100%;
+		}
+
+		.mobile-list-select select {
+			width: 100%;
+			min-height: 48px;
+			font-size: 16px;
+		}
+
+		/* Improve mobile hero section */
+		.mobile-hero {
+			padding: 1.5rem 0;
+		}
+
+		.mobile-quick-actions {
+			display: flex;
+			gap: 0.75rem;
+			margin-top: 1rem;
+		}
+
+		.mobile-action {
+			flex: 1;
+			min-height: 48px;
+			padding: 0.875rem;
+			border-radius: 8px;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.2s;
+		}
+
+		.mobile-action.primary {
+			background: var(--color-primary, #667eea);
+			color: white;
+			border: none;
+		}
+
+		/* Improve mobile scroll behavior */
+		.todo-list {
+			-webkit-overflow-scrolling: touch;
+		}
+
+		/* Better touch feedback */
+		button:active, .list-item:active, .mobile-menu-list-item:active {
+			transform: scale(0.98);
+		}
+
+		/* Improve calendar modal on mobile */
+		.calendar-grid {
+			-webkit-overflow-scrolling: touch;
+		}
+
+		/* Better spacing for mobile forms */
+		.task-options-row {
+			gap: 1rem;
+		}
+
+		.task-options-row label {
+			width: 100%;
+		}
+	}
+
+	/* Very small screens (phones in portrait) */
+	@media (max-width: 375px) {
+		.mobile-menu {
+			width: 90%;
+		}
+
+		.welcome strong {
+			display: block;
+			margin-top: 0.25rem;
+		}
+
+		.mobile-quick-actions {
+			flex-direction: column;
+		}
+
+		.mobile-action {
+			width: 100%;
+		}
 	}
 </style>
