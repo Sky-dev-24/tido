@@ -1,6 +1,9 @@
 <script>
 	import { goto } from '$app/navigation';
 
+	let { data } = $props();
+	let isFirstUser = data?.isFirstUser ?? false;
+
 	let username = $state('');
 	let email = $state('');
 	let password = $state('');
@@ -66,8 +69,18 @@
 			</div>
 			<a href="/login" class="btn-primary">Return to Login</a>
 		{:else}
-			<h1>Create Account</h1>
-			<p class="subtitle">Sign up to start using Tido</p>
+			{#if isFirstUser}
+				<h1>Welcome to Tido</h1>
+				<p class="subtitle">Create your administrator account</p>
+
+				<div class="info-message">
+					<p><strong>First-time setup</strong></p>
+					<p>You're creating the first account for this Tido instance. This account will have administrator privileges and can approve other users.</p>
+				</div>
+			{:else}
+				<h1>Create Account</h1>
+				<p class="subtitle">Sign up to start using Tido</p>
+			{/if}
 
 			{#if error}
 				<div class="error-message">{error}</div>
@@ -125,13 +138,15 @@
 			</div>
 
 			<button type="submit" class="btn-primary" disabled={loading}>
-				{loading ? 'Creating Account...' : 'Sign Up'}
+				{loading ? (isFirstUser ? 'Creating Admin Account...' : 'Creating Account...') : (isFirstUser ? 'Create Admin Account' : 'Sign Up')}
 			</button>
 		</form>
 
-			<p class="switch-auth">
-				Already have an account? <a href="/login">Sign in</a>
-			</p>
+			{#if !isFirstUser}
+				<p class="switch-auth">
+					Already have an account? <a href="/login">Sign in</a>
+				</p>
+			{/if}
 		{/if}
 	</div>
 </div>
@@ -183,6 +198,28 @@
 		border-radius: 4px;
 		margin-bottom: 1rem;
 		font-size: 0.9rem;
+	}
+
+	.info-message {
+		background-color: #e3f2fd;
+		color: #0d47a1;
+		padding: 1rem;
+		border-radius: 4px;
+		margin-bottom: 1.5rem;
+		font-size: 0.9rem;
+		border-left: 4px solid #2196f3;
+	}
+
+	.info-message p {
+		margin: 0.5rem 0;
+	}
+
+	.info-message p:first-child {
+		margin-top: 0;
+	}
+
+	.info-message p:last-child {
+		margin-bottom: 0;
 	}
 
 	.success-message {

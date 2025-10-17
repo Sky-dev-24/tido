@@ -133,6 +133,16 @@ ensureUserColumn('dark_mode', 'INTEGER DEFAULT 0');
 ensureUserColumn('theme', "TEXT DEFAULT 'aurora'");
 ensureUserColumn('view_density', "TEXT DEFAULT 'comfortable'");
 
+function ensureListColumn(name, definition) {
+  const columns = db.prepare('PRAGMA table_info(lists)').all();
+  const hasColumn = columns.some((column) => column.name === name);
+  if (!hasColumn) {
+    db.prepare(`ALTER TABLE lists ADD COLUMN ${name} ${definition}`).run();
+  }
+}
+
+ensureListColumn('archived_at', 'TEXT');
+
 function ensureTodoParentIndex() {
   const columns = db.prepare('PRAGMA table_info(todos)').all();
   const hasParentColumn = columns.some((column) => column.name === 'parent_todo_id');
@@ -259,6 +269,11 @@ function getAttachmentRecord(id) {
 }
 
 // ===== USER FUNCTIONS =====
+
+export function hasAnyUsers() {
+  const result = db.prepare('SELECT COUNT(*) as count FROM users').get();
+  return result.count > 0;
+}
 
 export async function createUser(username, email, password) {
   const passwordHash = await bcrypt.hash(password, 10);
@@ -912,7 +927,7 @@ export function getUserLists(userId) {
       (SELECT COUNT(*) FROM list_members WHERE list_id = l.id) as member_count
     FROM lists l
     JOIN list_members lm ON l.id = lm.list_id
-    WHERE lm.user_id = ?
+    WHERE lm.user_id = ? AND l.archived_at IS NULL
     ORDER BY l.created_at DESC
   `).all(userId);
 }
@@ -985,10 +1000,59 @@ export function updateList(listId, userId, updates) {
   return getList(listId, userId);
 }
 
-export function deleteList(listId, userId) {
+export function archiveList(listId, userId) {
   const list = getList(listId, userId);
   if (!list || list.permission_level !== 'admin') {
     throw new Error('Insufficient permissions');
+  }
+
+  const archivedAt = new Date().toISOString();
+  db.prepare('UPDATE lists SET archived_at = ? WHERE id = ?').run(archivedAt, listId);
+  return true;
+}
+
+export function getArchivedLists(userId) {
+  return db.prepare(`
+    SELECT l.*, lm.permission_level,
+      (SELECT COUNT(*) FROM list_members WHERE list_id = l.id) as member_count
+    FROM lists l
+    JOIN list_members lm ON l.id = lm.list_id
+    WHERE lm.user_id = ? AND l.archived_at IS NOT NULL
+    ORDER BY l.archived_at DESC
+  `).all(userId);
+}
+
+export function restoreList(listId, userId) {
+  const list = db.prepare(`
+    SELECT l.*, lm.permission_level
+    FROM lists l
+    JOIN list_members lm ON l.id = lm.list_id
+    WHERE l.id = ? AND lm.user_id = ?
+  `).get(listId, userId);
+
+  if (!list || list.permission_level !== 'admin') {
+    throw new Error('Insufficient permissions');
+  }
+
+  db.prepare('UPDATE lists SET archived_at = NULL WHERE id = ?').run(listId);
+  return true;
+}
+
+export function deleteList(listId, userId) {
+  const list = db.prepare(`
+    SELECT l.*, lm.permission_level
+    FROM lists l
+    JOIN list_members lm ON l.id = lm.list_id
+    WHERE l.id = ? AND lm.user_id = ?
+  `).get(listId, userId);
+
+  if (!list || list.permission_level !== 'admin') {
+    throw new Error('Insufficient permissions');
+  }
+
+  // Only allow deletion of archived lists
+  if (!list.archived_at) {
+    throw new Error('List must be archived before deletion');
   }
 
   db.prepare('DELETE FROM lists WHERE id = ?').run(listId);

@@ -28,6 +28,7 @@
 	let currentList = $state(null);
 	let todos = $state([]);
 	let invitations = $state([]);
+	let archivedLists = $state([]);
 	let newTodoText = $state('');
 	let filter = $state('all');
 let newTodoMode = $state('single');
@@ -39,6 +40,7 @@ let showInviteModal = $state(false);
 let showInvitationsModal = $state(false);
 let showRecentlyDeletedModal = $state(false);
 let showSettingsModal = $state(false);
+let showArchivedListsModal = $state(false);
 let newListName = $state('');
 let inviteUsername = $state('');
 let invitePermission = $state('editor');
@@ -938,6 +940,88 @@ async function selectList(list) {
 		}
 	}
 
+	async function archiveCurrentList() {
+		if (!currentList) return;
+
+		const isPersonalList = currentList.name === 'My Tasks' && currentList.member_count === 1;
+		if (isPersonalList) {
+			alert('Cannot archive your personal list');
+			return;
+		}
+
+		if (currentList.permission_level !== 'admin') {
+			alert('Only list administrators can archive lists');
+			return;
+		}
+
+		const confirmArchive = confirm(`Are you sure you want to archive "${currentList.name}"? You can restore it later from the archived lists.`);
+
+		if (!confirmArchive) return;
+
+		const response = await fetch('/api/lists', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ listId: currentList.id, action: 'archive' })
+		});
+
+		if (response.ok) {
+			currentList = null;
+			todos = [];
+			await fetchLists();
+			// Select first available list
+			if (lists.length > 0) {
+				await selectList(lists[0]);
+			}
+		} else {
+			const error = await response.json();
+			alert(error.error || 'Failed to archive list');
+		}
+	}
+
+	async function fetchArchivedLists() {
+		const response = await fetch('/api/lists?archived=true');
+		if (response.ok) {
+			archivedLists = await response.json();
+		}
+	}
+
+	async function restoreList(listId) {
+		const response = await fetch('/api/lists', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ listId, action: 'restore' })
+		});
+
+		if (response.ok) {
+			await fetchArchivedLists();
+			await fetchLists();
+			alert('List restored successfully!');
+		} else {
+			const error = await response.json();
+			alert(error.error || 'Failed to restore list');
+		}
+	}
+
+	async function permanentlyDeleteList(listId, listName) {
+		const confirmDelete = confirm(`Are you sure you want to permanently delete "${listName}"? This action cannot be undone and will delete all tasks in this list.`);
+
+		if (!confirmDelete) return;
+
+		const response = await fetch('/api/lists', {
+			method: 'DELETE',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ listId })
+		});
+
+		if (response.ok) {
+			await fetchArchivedLists();
+			alert('List permanently deleted');
+		} else {
+			const error = await response.json();
+			alert(error.error || 'Failed to delete list');
+		}
+	}
+
 	async function inviteUser() {
 		if (inviteUsername.trim()) {
 			const response = await fetch('/api/invitations', {
@@ -1458,7 +1542,10 @@ setContext('todo-actions', {
 	<!-- Sidebar for lists -->
 	<div class="sidebar">
 		<div class="sidebar-header">
-			<h2>My Lists</h2>
+			<div class="sidebar-logo-section">
+				<img src="/tido-logo.png" alt="Tido Logo" class="sidebar-logo" />
+				<h2>My Lists</h2>
+			</div>
 			<button class="icon-btn" onclick={() => showNewListModal = true} title="Create new list">+</button>
 		</div>
 
@@ -1491,6 +1578,10 @@ setContext('todo-actions', {
 				Invitations ({invitations.length})
 			</button>
 		{/if}
+
+		<button class="archived-lists-btn" onclick={async () => { await fetchArchivedLists(); showArchivedListsModal = true; }}>
+			Archived Lists
+		</button>
 	</div>
 
 	<!-- Main content -->
@@ -1527,6 +1618,9 @@ setContext('todo-actions', {
 					{#if currentList.permission_level === 'admin' && !(currentList.name === 'My Tasks' && currentList.member_count === 1)}
 						<button class="invite-btn" onclick={() => showInviteModal = true}>
 							Invite Users
+						</button>
+						<button class="archive-list-btn" onclick={archiveCurrentList}>
+							Archive List
 						</button>
 					{/if}
 				</div>
@@ -1875,6 +1969,55 @@ setContext('todo-actions', {
 	</div>
 {/if}
 
+{#if showArchivedListsModal}
+	<div
+		class="modal-overlay"
+		role="button"
+		tabindex="0"
+		aria-label="Close archived lists modal"
+		onclick={() => showArchivedListsModal = false}
+		onkeydown={(event) => handleOverlayKey(event, () => showArchivedListsModal = false)}
+	>
+		<div
+			class="modal"
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="archived-lists-title"
+			tabindex="-1"
+			onclick={(event) => event.stopPropagation()}
+			onkeydown={(event) => event.stopPropagation()}
+		>
+			<h2 id="archived-lists-title">Archived Lists</h2>
+			{#if archivedLists.length === 0}
+				<p class="empty-message">No archived lists</p>
+			{:else}
+				<div class="archived-lists-container">
+					{#each archivedLists as list (list.id)}
+						<div class="archived-list-item">
+							<div class="archived-list-info">
+								<strong>{list.name}</strong>
+								{#if list.member_count > 1}
+									<span class="member-count">{list.member_count} members</span>
+								{/if}
+								<span class="archived-date">Archived {new Date(list.archived_at).toLocaleDateString()}</span>
+							</div>
+							<div class="archived-list-actions">
+								<button class="btn-restore" onclick={() => restoreList(list.id)}>Restore</button>
+								{#if list.permission_level === 'admin'}
+									<button class="btn-delete-permanent" onclick={() => permanentlyDeleteList(list.id, list.name)}>Delete</button>
+								{/if}
+							</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
+			<div class="modal-actions">
+				<button class="btn-secondary" onclick={() => showArchivedListsModal = false}>Close</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
 {#if showRecentlyDeletedModal}
 	<div
 		class="modal-overlay"
@@ -2050,6 +2193,18 @@ setContext('todo-actions', {
 		color: var(--color-text, #2c3e50);
 	}
 
+	.sidebar-logo-section {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.sidebar-logo {
+		height: 32px;
+		width: auto;
+		object-fit: contain;
+	}
+
 	.icon-btn {
 		width: 32px;
 		height: 32px;
@@ -2220,6 +2375,108 @@ setContext('todo-actions', {
 
 	.invite-btn:hover {
 		background: var(--color-primary-hover, #5568d3);
+	}
+
+	.archive-list-btn {
+		padding: 0.5rem 1rem;
+		background: #f39c12;
+		color: white;
+		border: none;
+		border-radius: 4px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: background 0.2s;
+	}
+
+	.archive-list-btn:hover {
+		background: #e67e22;
+	}
+
+	.archived-lists-btn {
+		margin-top: 0.5rem;
+		padding: 0.75rem;
+		background: transparent;
+		border: 2px solid #ddd;
+		border-radius: 4px;
+		cursor: pointer;
+		font-weight: 500;
+		transition: all 0.2s;
+		width: calc(100% - 2rem);
+		margin-left: 1rem;
+		color: #333;
+	}
+
+	.archived-lists-btn:hover {
+		background: #f5f5f5;
+		border-color: var(--color-primary, #667eea);
+		color: var(--color-primary, #667eea);
+	}
+
+	.archived-lists-container {
+		max-height: 400px;
+		overflow-y: auto;
+		margin: 1rem 0;
+	}
+
+	.archived-list-item {
+		padding: 1rem;
+		border: 1px solid #ddd;
+		border-radius: 4px;
+		margin-bottom: 0.75rem;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+
+	.archived-list-info {
+		flex: 1;
+	}
+
+	.archived-list-info strong {
+		display: block;
+		margin-bottom: 0.25rem;
+	}
+
+	.archived-list-info .member-count,
+	.archived-list-info .archived-date {
+		font-size: 0.875rem;
+		color: #666;
+		margin-right: 0.5rem;
+	}
+
+	.archived-list-actions {
+		display: flex;
+		gap: 0.5rem;
+	}
+
+	.btn-restore {
+		padding: 0.5rem 1rem;
+		background: #28a745;
+		color: white;
+		border: none;
+		border-radius: 4px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: background 0.2s;
+	}
+
+	.btn-restore:hover {
+		background: #218838;
+	}
+
+	.btn-delete-permanent {
+		padding: 0.5rem 1rem;
+		background: #dc3545;
+		color: white;
+		border: none;
+		border-radius: 4px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: background 0.2s;
+	}
+
+	.btn-delete-permanent:hover {
+		background: #c82333;
 	}
 
 	.header {
@@ -3117,6 +3374,18 @@ setContext('todo-actions', {
 		border-color: var(--color-primary, #667eea);
 	}
 
+	:global(body.dark-mode) .archived-lists-btn {
+		border-color: #444;
+		color: #e0e0e0;
+		background: #252538;
+	}
+
+	:global(body.dark-mode) .archived-lists-btn:hover {
+		background: #2d2d44;
+		border-color: var(--color-primary, #667eea);
+		color: var(--color-primary, #667eea);
+	}
+
 	:global(body.dark-mode) .theme-toggle {
 		background-color: #353549;
 	}
@@ -3347,5 +3616,15 @@ setContext('todo-actions', {
 	:global(body.dark-mode) .setting-toggle-btn:hover {
 		background: var(--color-primary, #667eea);
 		color: white;
+	}
+
+	:global(body.dark-mode) .archived-list-item {
+		border-color: #444;
+		background: #1e1e2e;
+	}
+
+	:global(body.dark-mode) .archived-list-info .member-count,
+	:global(body.dark-mode) .archived-list-info .archived-date {
+		color: #999;
 	}
 </style>
