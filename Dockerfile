@@ -23,8 +23,8 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install runtime dependencies for better-sqlite3 and su-exec for user switching
-RUN apk add --no-cache sqlite-libs su-exec shadow
+# Install runtime dependencies for better-sqlite3, su-exec, and curl for healthchecks
+RUN apk add --no-cache sqlite-libs su-exec shadow curl
 
 # Copy package files
 COPY package*.json ./
@@ -92,7 +92,7 @@ ENV DB_PATH=/app/data/todos.db
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD ["CMD-SHELL", "wget -q -T 5 -O /dev/null http://127.0.0.1:3000/ || exit 1"]
+  CMD ["curl", "-fsS", "-m", "5", "http://127.0.0.1:3000/"]
 
 # Run the app
 CMD ["/app/entrypoint.sh"]
