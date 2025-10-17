@@ -7,7 +7,9 @@ import crypto from 'crypto';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const db = new Database(join(__dirname, '../../todos.db'));
+// Support configurable database path for Docker deployment
+const dbPath = process.env.DB_PATH || join(__dirname, '../../todos.db');
+const db = new Database(dbPath);
 
 // Initialize database tables
 db.exec(`
