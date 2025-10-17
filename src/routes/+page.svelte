@@ -125,9 +125,9 @@ $effect(() => {
 	}
 });
 
-let totalTodoCount = $derived(() => todos.length);
-let activeTodoCount = $derived(() => todos.filter((todo) => !todo.completed).length);
-let completedTodoCount = $derived(() => todos.filter((todo) => todo.completed).length);
+let totalTodoCount = $derived.by(() => todos.length);
+let activeTodoCount = $derived.by(() => todos.filter((todo) => !todo.completed).length);
+let completedTodoCount = $derived.by(() => todos.filter((todo) => todo.completed).length);
 
 function resolvePriorityKey(value) {
 	if (!value) return 'medium';
