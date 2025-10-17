@@ -16,7 +16,7 @@ export function initializeWebSocket(server) {
 			origin: '*',
 			methods: ['GET', 'POST']
 		},
-		path: '/socket.io/'
+		path: '/socket.io'
 	});
 
 	io.on('connection', (socket) => {

@@ -18,7 +18,7 @@ export function initializeWebSocket() {
 	}
 
 	socket = io({
-		path: '/socket.io/',
+		path: '/socket.io',
 		transports: ['websocket', 'polling']
 	});
 
