@@ -1194,13 +1194,18 @@ function handleAssigneeKeyDown(event) {
 		}
 
 		.todo-item {
-			padding: 0.85rem 1rem;
+			padding: 0;
+			margin-bottom: 1.25rem;
+		}
+
+		.swipe-content {
+			padding: 1rem 1.1rem;
 		}
 
 		.todo-row {
 			display: flex;
 			align-items: flex-start;
-			gap: 0.9rem;
+			gap: 0.75rem;
 			flex-wrap: nowrap;
 		}
 
@@ -1212,27 +1217,48 @@ function handleAssigneeKeyDown(event) {
 			display: none;
 		}
 
+		/* Hide metadata by default on mobile - only show essential info */
 		.meta-row {
-			flex-direction: column;
-			gap: 0.65rem;
+			display: none;
 		}
 
-		.meta-item,
+		/* Show metadata when todo is expanded/being edited */
+		.todo-item.being-edited .meta-row,
+		.todo-item:focus-within .meta-row {
+			display: flex;
+			flex-direction: column;
+			gap: 0.5rem;
+			margin-top: 0.75rem;
+			padding-top: 0.75rem;
+			border-top: 1px solid #e4e9ff;
+		}
+
+		:global(body.dark-mode) .todo-item.being-edited .meta-row,
+		:global(body.dark-mode) .todo-item:focus-within .meta-row {
+			border-top-color: #404057;
+		}
+
+		.meta-item {
+			width: 100%;
+		}
+
 		.meta-chip,
 		.meta-control {
 			width: 100%;
+			justify-content: flex-start;
+			min-height: 44px;
 		}
 
 		.checkbox-cell {
 			align-self: flex-start;
 			order: 0;
-			margin-top: 0.25rem;
+			margin-top: 0.3rem;
 		}
 
 		.expand-cell {
 			align-self: flex-start;
 			order: 1;
-			margin-top: 0.2rem;
+			margin-top: 0.25rem;
 		}
 
 		.content-cell {
@@ -1242,48 +1268,91 @@ function handleAssigneeKeyDown(event) {
 			display: flex;
 			flex-direction: column;
 			align-items: stretch;
-			gap: 0.65rem;
+			gap: 0;
 		}
 
 		.actions-cell {
 			order: 3;
 			margin-left: auto;
 			display: flex;
-			align-items: center;
-			gap: 0.65rem;
-			padding-top: 0.35rem;
+			align-items: flex-start;
+			gap: 0.5rem;
+			padding-top: 0.3rem;
 		}
 
+		/* More breathing room for subtasks on mobile */
 		.child-list {
-			margin-left: 1.25rem;
-			padding-left: 0.9rem;
-			border-left-width: 1.5px;
+			margin-left: 0.5rem;
+			padding-left: 0.75rem;
+			border-left-width: 2px;
+			margin-top: 0.75rem;
 		}
 
+		/* Hide subtask input by default on mobile */
 		.subtask-input {
-			margin-left: 1.25rem;
+			margin-left: 0.5rem;
+			margin-top: 0.5rem;
 		}
 
+		/* Better text wrapping on mobile */
 		.todo-title {
 			white-space: normal;
-			word-break: normal;
+			word-break: break-word;
 			overflow-wrap: anywhere;
-			font-size: 1.05rem;
+			font-size: 1rem;
 			line-height: 1.5;
+			padding: 0;
+		}
+
+		.todo-title-input {
+			font-size: 1rem;
+			min-width: 100%;
+			padding: 0.5rem;
 		}
 
 		.priority-badge {
 			font-size: 0.8rem;
-			padding: 0.35rem 0.7rem;
+			padding: 0.4rem 0.75rem;
 		}
 
 		.notes-section {
-			padding-left: 0;
-			padding-right: 0;
+			padding: 0.75rem;
+			margin-top: 0.75rem;
+			margin-left: 0;
+			margin-right: 0;
 		}
 
 		.subtask-summary {
-			margin-top: 0.85rem;
+			margin-top: 0.75rem;
+			padding-left: 0;
+		}
+
+		/* Make action buttons more tappable on mobile */
+		.notes-toggle-btn,
+		.delete-btn {
+			min-width: 44px;
+			min-height: 44px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			font-size: 1.3rem;
+		}
+
+		.expand-btn {
+			min-width: 32px;
+			min-height: 32px;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+		}
+
+		/* Subtasks - collapse by default on mobile */
+		.todo-item.subtask-card {
+			margin-bottom: 0.75rem;
+		}
+
+		.todo-item.subtask-card .meta-row {
+			display: none;
 		}
 	}
 
