@@ -23,8 +23,8 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install runtime dependencies for better-sqlite3
-RUN apk add --no-cache sqlite-libs
+# Install runtime dependencies for better-sqlite3 and su-exec for user switching
+RUN apk add --no-cache sqlite-libs su-exec shadow
 
 # Copy package files
 COPY package*.json ./
@@ -43,11 +43,43 @@ COPY --from=builder /app/src/lib ./src/lib
 # Create directories for data persistence
 RUN mkdir -p /app/data /app/uploads
 
-# Create a startup script to handle database location
-RUN echo '#!/bin/sh' > /app/start.sh && \
-    echo 'export DB_PATH=${DB_PATH:-/app/data/todos.db}' >> /app/start.sh && \
-    echo 'node build' >> /app/start.sh && \
-    chmod +x /app/start.sh
+# Create entrypoint script with proper user handling
+RUN cat > /app/entrypoint.sh <<'EOF'
+#!/bin/sh
+set -e
+
+# Default to user 1000 if not specified
+PUID=${PUID:-1000}
+PGID=${PGID:-1000}
+
+echo "Starting Tido with PUID=$PUID and PGID=$PGID"
+
+# Create group if it doesn't exist
+if ! getent group $PGID > /dev/null 2>&1; then
+    echo "Creating group with GID $PGID"
+    addgroup -g $PGID appgroup
+fi
+
+# Create user if it doesn't exist
+if ! getent passwd $PUID > /dev/null 2>&1; then
+    echo "Creating user with UID $PUID"
+    adduser -D -u $PUID -G $(getent group $PGID | cut -d: -f1) appuser
+fi
+
+# Set ownership of data directories
+echo "Setting permissions on /app/data and /app/uploads"
+chown -R $PUID:$PGID /app/data /app/uploads
+
+# Set DB_PATH environment variable
+export DB_PATH=${DB_PATH:-/app/data/todos.db}
+echo "Database path: $DB_PATH"
+
+# Switch to the specified user and run the app
+echo "Starting Node.js application..."
+exec su-exec $PUID:$PGID node build
+EOF
+
+RUN chmod +x /app/entrypoint.sh
 
 # Expose the port
 EXPOSE 3000
@@ -62,4 +94,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3000', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
 
 # Run the app
-CMD ["/app/start.sh"]
+CMD ["/app/entrypoint.sh"]
