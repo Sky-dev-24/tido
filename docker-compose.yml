@@ -12,6 +12,8 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
+      # Cookie security - set to 'false' for HTTP access
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
       # Unraid compatibility - allow override via Portainer
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}

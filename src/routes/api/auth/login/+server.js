@@ -32,11 +32,12 @@ export async function POST({ request, cookies }) {
     const session = createSession(user.id);
 
     // Set cookie
+    // Use COOKIE_SECURE env var to control secure flag (set to 'false' for HTTP in Docker)
     cookies.set('session', session.id, {
       path: '/',
       httpOnly: true,
       sameSite: 'strict',
-      secure: process.env.NODE_ENV === 'production',
+      secure: process.env.COOKIE_SECURE !== 'false' && process.env.NODE_ENV === 'production',
       maxAge: 60 * 60 * 24 * 7 // 7 days
     });
 
