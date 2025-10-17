@@ -1,5 +1,5 @@
 <script>
-	import { getContext } from 'svelte';
+	import { getContext, onMount, onDestroy } from 'svelte';
 	import { marked } from 'marked';
 	import TodoAttachments from './TodoAttachments.svelte';
 	import TodoItemComponent from './TodoItem.svelte';
@@ -35,6 +35,14 @@
 	getTypingUser,
 	currentListId
 	} = getContext('todo-actions');
+const mobileEnhancements = getContext('mobile-enhancements') ?? {};
+const mobileActionSheet = getContext('mobile-action-sheet') ?? null;
+const domRegistry = getContext('todo-dom-registry') ?? null;
+const mobileDnd = getContext('mobile-dnd') ?? null;
+
+	const isMobileDevice = mobileEnhancements?.isMobile?.() ?? false;
+	const hasTouchInput = mobileEnhancements?.hasCoarsePointer?.() ?? false;
+	const openActionSheet = mobileActionSheet?.openActionSheet ?? null;
 
 	let subtaskText = $state('');
 	let subtaskPriority = $state('medium');
@@ -106,11 +114,165 @@ let typingUserNotes = $derived.by(() => {
 });
 
 	let canHaveSubtasks = $derived(level === 0);
-	let childTodos = $derived(canHaveSubtasks ? todo?.subtasks ?? [] : []);
-	let hasChildren = $derived(childTodos.length > 0);
-	const indentVars = {
-		'--indent-level': level
+let childTodos = $derived(canHaveSubtasks ? todo?.subtasks ?? [] : []);
+let hasChildren = $derived(childTodos.length > 0);
+const indentVars = {
+	'--indent-level': level
+};
+
+const swipeThreshold = 70;
+let isSwiping = $state(false);
+let swipeOffset = $state(0);
+let swipeStartX = 0;
+let swipeStartY = 0;
+let longPressTimer;
+let longPressTriggered = false;
+let hostElement;
+let swipeContentEl;
+
+function openQuickActions(event = null) {
+	if (typeof openActionSheet === 'function') {
+		openActionSheet({
+			todo,
+			currentUserId,
+			sourceEvent: event,
+			actions: {
+				startEditingText,
+				toggleNotes,
+				toggleExpanded: () => toggleExpanded(todo.id),
+				markComplete: () => toggleTodoComplete(todo.id, todo.completed),
+				deleteTodo: () => deleteTodo(todo.id)
+			}
+		});
+	}
+}
+
+function shouldIgnoreGesture(target) {
+	if (!target) return false;
+	const interactive = target.closest('input, button, textarea, select, a, label');
+	return Boolean(interactive);
+}
+
+function clearLongPressTimer() {
+	if (longPressTimer) {
+		clearTimeout(longPressTimer);
+		longPressTimer = undefined;
+	}
+}
+
+function handleTouchStart(event) {
+	if (!hasTouchInput && !isMobileDevice) {
+		return;
+	}
+	if (shouldIgnoreGesture(event.target)) {
+		return;
+	}
+
+	const touch = event.touches?.[0];
+	if (!touch) return;
+
+	swipeStartX = touch.clientX;
+	swipeStartY = touch.clientY;
+	isSwiping = false;
+	longPressTriggered = false;
+	swipeOffset = 0;
+
+	clearLongPressTimer();
+	longPressTimer = setTimeout(() => {
+		longPressTriggered = true;
+		isSwiping = false;
+		swipeOffset = 0;
+		openQuickActions(event);
+	}, 550);
+}
+
+function handleTouchMove(event) {
+	if ((!hasTouchInput && !isMobileDevice) || longPressTriggered) {
+		return;
+	}
+
+	const touch = event.touches?.[0];
+	if (!touch) return;
+
+	const deltaX = touch.clientX - swipeStartX;
+	const deltaY = touch.clientY - swipeStartY;
+
+	if (!isSwiping) {
+		if (Math.abs(deltaX) < 12 || Math.abs(deltaX) < Math.abs(deltaY)) {
+			return;
+		}
+		isSwiping = true;
+	}
+
+	if (isSwiping) {
+		clearLongPressTimer();
+		event.preventDefault();
+		event.stopPropagation();
+		const limited = Math.max(Math.min(deltaX, 140), -140);
+		swipeOffset = limited;
+	}
+}
+
+async function triggerSwipeAction(action) {
+	if (action === 'complete') {
+		await toggleTodoComplete(todo.id, todo.completed);
+	} else if (action === 'delete') {
+		const confirmDelete = confirm('Delete this task?');
+		if (confirmDelete) {
+			await deleteTodo(todo.id);
+		}
+	}
+}
+
+async function handleTouchEnd() {
+	clearLongPressTimer();
+	if (!isSwiping) {
+		if (!longPressTriggered) {
+			// treat as tap, no action
+		}
+		swipeOffset = 0;
+		isSwiping = false;
+		return;
+	}
+
+	const finalOffset = swipeOffset;
+	swipeOffset = 0;
+	isSwiping = false;
+
+	if (finalOffset > swipeThreshold) {
+		await triggerSwipeAction('complete');
+	} else if (finalOffset < -swipeThreshold) {
+		await triggerSwipeAction('delete');
+	}
+	longPressTriggered = false;
+}
+
+function handleDragHandlePointerDown(event) {
+	if (!mobileDnd?.startDrag) {
+		return;
+	}
+	event.preventDefault();
+	event.stopPropagation();
+	clearLongPressTimer();
+	mobileDnd.startDrag({ todo, level }, event);
+}
+
+onMount(() => {
+	domRegistry?.registerElement?.(todo.id, hostElement);
+	if (swipeContentEl) {
+		swipeContentEl.addEventListener('touchmove', handleTouchMove, { passive: false });
+	}
+	return () => {
+		domRegistry?.unregisterElement?.(todo.id);
+		if (swipeContentEl) {
+			swipeContentEl.removeEventListener('touchmove', handleTouchMove);
+		}
 	};
+});
+
+onDestroy(() => {
+	clearLongPressTimer();
+});
 
 	// Watch for completion state changes to trigger animation
 	$effect(() => {
@@ -424,12 +586,32 @@ function handleAssigneeKeyDown(event) {
 	class:completing={isCompletionAnimating}
 	class:dragging={isDragging}
 	class:drag-over={isDragOver}
-	draggable={onDragStart !== null}
+	class:swipe-right={swipeOffset > 16}
+	class:swipe-left={swipeOffset < -16}
+	bind:this={hostElement}
+	draggable={onDragStart !== null && !(isMobileDevice && hasTouchInput)}
 	ondragstart={onDragStart ? () => onDragStart(todo) : null}
 	ondragover={onDragOver ? (e) => onDragOver(e, todo) : null}
 	ondrop={onDrop ? (e) => onDrop(e, todo) : null}
 	ondragend={onDragEnd ? () => onDragEnd() : null}
 >
+	<div class="swipe-background">
+		<div class="swipe-zone swipe-complete">
+			<span>✓ Complete</span>
+		</div>
+		<div class="swipe-zone swipe-delete">
+			<span>🗑 Delete</span>
+		</div>
+	</div>
+	<div
+		class="swipe-content"
+		class:swiping={isSwiping}
+		style={`transform: translateX(${swipeOffset}px);`}
+		bind:this={swipeContentEl}
+		ontouchstart={handleTouchStart}
+		ontouchend={handleTouchEnd}
+		ontouchcancel={handleTouchEnd}
+	>
 	{#if editingUser}
 		<div class="presence-indicator">
 			<span class="presence-badge">✏️ {editingUser.username} is editing</span>
@@ -440,7 +622,19 @@ function handleAssigneeKeyDown(event) {
 			<span class="conflict-badge">⚠️ Conflict detected</span>
 		</div>
 	{/if}
-	<div class="todo-row">
+	<div class="todo-row" class:has-mobile-handle={(hasTouchInput || isMobileDevice) && level === 0}>
+		{#if (hasTouchInput || isMobileDevice) && level === 0}
+			<div class="drag-handle-cell">
+				<button
+					type="button"
+					class="drag-handle-btn"
+					onpointerdown={handleDragHandlePointerDown}
+					aria-label="Reorder task"
+				>
+					☰
+				</button>
+			</div>
+		{/if}
 		<div class="checkbox-cell">
 			<input
 				type="checkbox"
@@ -717,6 +911,8 @@ function handleAssigneeKeyDown(event) {
 			</div>
 		</div>
 	{/if}
+
+	</div>
 </li>
 
 <style>
@@ -731,10 +927,61 @@ function handleAssigneeKeyDown(event) {
 		border: 1px solid #e2e6ff;
 		border-radius: 12px;
 		box-shadow: 0 4px 14px rgba(64, 76, 140, 0.06);
-		padding: var(--todo-item-padding, 0.9rem 1.1rem);
+		padding: 0;
+		overflow: hidden;
 		transition: border-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease, transform 0.2s ease;
 		position: relative;
 		cursor: grab;
+	}
+
+	.swipe-content {
+		position: relative;
+		z-index: 1;
+		padding: var(--todo-item-padding, 0.9rem 1.1rem);
+		background: inherit;
+		transition: transform 0.2s ease;
+		will-change: transform;
+	}
+
+	.swipe-content.swiping {
+		transition: none;
+	}
+
+	.swipe-background {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		justify-content: space-between;
+		align-items: stretch;
+		pointer-events: none;
+		background: transparent;
+	}
+
+	.swipe-zone {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-weight: 700;
+		color: #fff;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		padding: 0 1rem;
+		opacity: 0;
+		transition: opacity 0.2s ease;
+	}
+
+	.swipe-zone.swipe-complete {
+		background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
+	}
+
+	.swipe-zone.swipe-delete {
+		background: linear-gradient(135deg, #fb7185 0%, #ef4444 100%);
+	}
+
+	.todo-item.swipe-right .swipe-zone.swipe-complete,
+	.todo-item.swipe-left .swipe-zone.swipe-delete {
+		opacity: 1;
 	}
 
 	.todo-item[draggable="true"]:active {
@@ -894,6 +1141,31 @@ function handleAssigneeKeyDown(event) {
 		gap: var(--todo-item-gap, 0.5rem);
 		padding-left: calc(var(--indent-size) * var(--indent-level));
 		font-size: var(--todo-item-font-size, 1rem);
+	}
+
+	.todo-row.has-mobile-handle {
+		grid-template-columns: 32px 26px 26px minmax(0, 1fr) auto;
+	}
+
+	.drag-handle-cell {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.drag-handle-btn {
+		border: none;
+		background: transparent;
+		font-size: 1.2rem;
+		line-height: 1;
+		cursor: grab;
+		color: #9aa0c2;
+		padding: 0;
+	}
+
+	.drag-handle-btn:active {
+		cursor: grabbing;
+		color: #5568d3;
 	}
 
 	.todo-row input[type='checkbox'] {
