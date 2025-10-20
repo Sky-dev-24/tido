@@ -63,6 +63,9 @@ let expandedTodos = $state(new SvelteSet());
 let darkMode = $state(data.user.dark_mode === 1);
 let currentTheme = $state(data.user.theme || 'aurora');
 let currentViewDensity = $state(data.user.view_density || 'comfortable');
+
+// Derived logo path based on dark mode
+let logoPath = $derived(darkMode ? '/Tido_v8_FINAL_WHT.png' : '/Tido_v8_FINAL_BLK.png');
 const weekdayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 };
 const PRIORITY_LABELS = { high: 'High priority', medium: 'Medium priority', low: 'Low priority' };
@@ -2152,11 +2155,9 @@ setContext('mobile-dnd', {
 	<div id="sidebar-nav" class="sidebar">
 		<div class="sidebar-header">
 			<div class="sidebar-logo-section">
-				<img src="/tido-logo.png" alt="Tido Logo" class="sidebar-logo" />
+				<img src={logoPath} alt="Tido Logo" class="sidebar-logo" />
+				<span class="logo-divider"></span>
 				<h2>My Lists</h2>
-			</div>
-			<div class="sidebar-header-actions">
-				<button class="icon-btn" onclick={() => showNewListModal = true} title="Create new list" aria-label="Create new list">+</button>
 			</div>
 		</div>
 
@@ -2182,6 +2183,10 @@ setContext('mobile-dnd', {
 					{/if}
 				</button>
 			{/each}
+
+			<button class="add-list-btn" onclick={() => showNewListModal = true} title="Create new list" aria-label="Create new list">
+				+ Add List
+			</button>
 		</div>
 
 		{#if invitations.length > 0}
@@ -2905,7 +2910,7 @@ setContext('mobile-dnd', {
 		<nav class="mobile-menu" onclick={(e) => e.stopPropagation()}>
 			<div class="mobile-menu-header">
 				<div class="mobile-menu-logo">
-					<img src="/tido-logo.png" alt="Tido Logo" class="mobile-menu-logo-img" />
+					<img src={logoPath} alt="Tido Logo" class="mobile-menu-logo-img" />
 					<h2>Tido</h2>
 				</div>
 				<button class="mobile-menu-close" onclick={() => showMobileMenu = false} aria-label="Close menu">
@@ -3009,12 +3014,14 @@ setContext('mobile-dnd', {
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
+		margin-left: 1rem;
 	}
 
 	.sidebar-header h2 {
 		margin: 0;
 		font-size: 1.5rem;
 		color: var(--color-text, #2c3e50);
+		white-space: nowrap;
 	}
 
 	.sidebar-logo-section {
@@ -3024,9 +3031,16 @@ setContext('mobile-dnd', {
 	}
 
 	.sidebar-logo {
-		height: 32px;
+		height: 24px;
 		width: auto;
 		object-fit: contain;
+	}
+
+	.logo-divider {
+		width: 1px;
+		height: 20px;
+		background: var(--color-border, #e2e6ff);
+		margin: 0 0.25rem;
 	}
 
 	.icon-btn {
@@ -3109,6 +3123,27 @@ setContext('mobile-dnd', {
 		border-radius: 12px;
 		font-size: 0.75rem;
 		font-weight: 600;
+	}
+
+	.add-list-btn {
+		width: 100%;
+		padding: 0.75rem;
+		background: var(--color-primary, #667eea);
+		color: white;
+		border: 2px solid transparent;
+		border-radius: 8px;
+		font-weight: 600;
+		font-size: 0.95rem;
+		cursor: pointer;
+		transition: all 0.2s;
+		margin-bottom: 1rem;
+		text-align: center;
+	}
+
+	.add-list-btn:hover {
+		background: var(--color-primary-hover, #5568d3);
+		transform: translateY(-1px);
+		box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
 	}
 
 	.settings-btn {
@@ -4484,6 +4519,10 @@ setContext('mobile-dnd', {
 		color: #e0e0e0;
 	}
 
+	:global(body.dark-mode) .logo-divider {
+		background: rgba(255, 255, 255, 0.2);
+	}
+
 	:global(body.dark-mode) .list-item {
 		background: #252538;
 		color: #e0e0e0;
@@ -4531,6 +4570,16 @@ setContext('mobile-dnd', {
 
 	:global(body.dark-mode) .connection-status {
 		background-color: #252538;
+	}
+
+	:global(body.dark-mode) .add-list-btn {
+		background: var(--color-primary, #667eea);
+		color: white;
+	}
+
+	:global(body.dark-mode) .add-list-btn:hover {
+		background: var(--color-primary-hover, #5568d3);
+		box-shadow: 0 2px 8px rgba(102, 126, 234, 0.5);
 	}
 
 	:global(body.dark-mode) .settings-btn {

@@ -1190,22 +1190,22 @@ function handleAssigneeKeyDown(event) {
 
 	@media (max-width: 640px) {
 		:global(:root) {
-			--indent-size: 1.1rem;
+			--indent-size: 0.5rem;
 		}
 
 		.todo-item {
 			padding: 0;
-			margin-bottom: 1.25rem;
+			margin-bottom: 1rem;
 		}
 
 		.swipe-content {
-			padding: 1rem 1.1rem;
+			padding: 0.65rem 0.4rem;
 		}
 
 		.todo-row {
 			display: flex;
 			align-items: flex-start;
-			gap: 0.75rem;
+			gap: 0.3rem;
 			flex-wrap: nowrap;
 		}
 
@@ -1217,48 +1217,43 @@ function handleAssigneeKeyDown(event) {
 			display: none;
 		}
 
-		/* Hide metadata by default on mobile - only show essential info */
+		/* Hide metadata on mobile */
 		.meta-row {
-			display: none;
-		}
-
-		/* Show metadata when todo is expanded/being edited */
-		.todo-item.being-edited .meta-row,
-		.todo-item:focus-within .meta-row {
-			display: flex;
-			flex-direction: column;
-			gap: 0.5rem;
-			margin-top: 0.75rem;
-			padding-top: 0.75rem;
-			border-top: 1px solid #e4e9ff;
-		}
-
-		:global(body.dark-mode) .todo-item.being-edited .meta-row,
-		:global(body.dark-mode) .todo-item:focus-within .meta-row {
-			border-top-color: #404057;
+			display: none !important;
 		}
 
 		.meta-item {
-			width: 100%;
+			width: auto;
+			flex: 0 0 auto;
 		}
 
 		.meta-chip,
 		.meta-control {
-			width: 100%;
-			justify-content: flex-start;
-			min-height: 44px;
+			width: auto;
+			min-width: auto;
+			justify-content: center;
+			min-height: 36px;
+			padding: 0.35rem 0.65rem;
+			font-size: 0.75rem;
 		}
 
 		.checkbox-cell {
 			align-self: flex-start;
 			order: 0;
 			margin-top: 0.3rem;
+			flex-shrink: 0;
+		}
+
+		.checkbox-cell input[type='checkbox'] {
+			width: 16px;
+			height: 16px;
 		}
 
 		.expand-cell {
 			align-self: flex-start;
 			order: 1;
 			margin-top: 0.25rem;
+			flex-shrink: 0;
 		}
 
 		.content-cell {
@@ -1276,8 +1271,10 @@ function handleAssigneeKeyDown(event) {
 			margin-left: auto;
 			display: flex;
 			align-items: flex-start;
-			gap: 0.5rem;
+			justify-content: flex-end;
+			gap: 0.25rem;
 			padding-top: 0.3rem;
+			flex-shrink: 0;
 		}
 
 		/* More breathing room for subtasks on mobile */
@@ -1302,6 +1299,9 @@ function handleAssigneeKeyDown(event) {
 			font-size: 1rem;
 			line-height: 1.5;
 			padding: 0;
+			text-align: left;
+			width: 100%;
+			display: block;
 		}
 
 		.todo-title-input {
@@ -1330,20 +1330,23 @@ function handleAssigneeKeyDown(event) {
 		/* Make action buttons more tappable on mobile */
 		.notes-toggle-btn,
 		.delete-btn {
-			min-width: 44px;
-			min-height: 44px;
+			min-width: 38px;
+			min-height: 38px;
 			display: flex;
 			align-items: center;
 			justify-content: center;
-			font-size: 1.3rem;
+			font-size: 1.2rem;
+			padding: 0;
 		}
 
 		.expand-btn {
-			min-width: 32px;
-			min-height: 32px;
+			min-width: 28px;
+			min-height: 28px;
 			display: flex;
 			align-items: center;
 			justify-content: center;
+			font-size: 1rem;
+			padding: 0;
 		}
 
 		/* Subtasks - collapse by default on mobile */
@@ -1351,8 +1354,10 @@ function handleAssigneeKeyDown(event) {
 			margin-bottom: 0.75rem;
 		}
 
-		.todo-item.subtask-card .meta-row {
-			display: none;
+		/* Improve subtask background and border contrast in dark mode */
+		:global(body.dark-mode) .todo-item.subtask-card {
+			background: rgba(35, 42, 68, 0.95);
+			border-color: rgba(100, 116, 180, 0.4);
 		}
 	}
 
@@ -1379,8 +1384,9 @@ function handleAssigneeKeyDown(event) {
 
 	.content-cell {
 		display: flex;
-		align-items: center;
-		gap: 0.5rem;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0;
 		min-width: 0;
 	}
 
@@ -1390,6 +1396,9 @@ function handleAssigneeKeyDown(event) {
 		white-space: nowrap;
 		overflow: hidden;
 		text-overflow: ellipsis;
+		text-align: left;
+		width: 100%;
+		display: block;
 	}
 
 	.todo-title.editable {
@@ -1421,9 +1430,12 @@ function handleAssigneeKeyDown(event) {
 
 	.meta-row {
 		display: flex;
-		flex-wrap: wrap;
-		gap: 0.75rem;
+		flex-wrap: nowrap;
+		justify-content: flex-start;
+		gap: 0.5rem;
 		margin-top: 0.6rem;
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
 	}
 
 	.meta-item {
@@ -1455,7 +1467,7 @@ function handleAssigneeKeyDown(event) {
 		align-items: center;
 		justify-content: center;
 		gap: 0.35rem;
-		padding: 0.45rem 0.9rem;
+		padding: 0.5rem 1rem;
 		border-radius: 999px;
 		background: #f0f3ff;
 		color: #2c3e66;
@@ -1464,6 +1476,7 @@ function handleAssigneeKeyDown(event) {
 		font-weight: 600;
 		cursor: pointer;
 		transition: transform 0.15s ease, box-shadow 0.15s ease;
+		white-space: nowrap;
 	}
 
 	.meta-chip:hover {
@@ -1504,12 +1517,6 @@ function handleAssigneeKeyDown(event) {
 		background: #e9f7ef;
 		border-color: #a7f3d0;
 		color: #0f766e;
-	}
-
-	.todo-item.subtask-card .meta-chip {
-		background: rgba(99, 102, 241, 0.12);
-		border-color: rgba(99, 102, 241, 0.2);
-		color: #364571;
 	}
 
 	.todo-item.completed .todo-title {
@@ -1554,8 +1561,9 @@ function handleAssigneeKeyDown(event) {
 .assignee-badge {
 	border: none;
 	background: transparent;
-	padding: 0;
+	padding: 0.5rem 1rem;
 	font: inherit;
+	white-space: nowrap;
 }
 
 	.assignee-dropdown {
