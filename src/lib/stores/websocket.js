@@ -7,15 +7,16 @@ export const connectionState = writable('disconnected');
 
 let socket = null;
 let currentListId = null;
+let currentMembership = null;
 
 // Initialize WebSocket connection
 export function initializeWebSocket() {
 	if (!browser) return;
 
-	if (socket?.connected) {
-		console.log('WebSocket already connected');
-		return socket;
-	}
+        if (socket?.connected) {
+                console.log('WebSocket already connected');
+                return socket;
+        }
 
 	socket = io({
 		path: '/socket.io',
@@ -27,11 +28,11 @@ export function initializeWebSocket() {
 		connectionState.set('connected');
 
 		// Rejoin current list if we were in one
-		if (currentListId) {
-			console.log('[WebSocket] Rejoining list after reconnect:', currentListId);
-			socket.emit('join-list', currentListId);
-		}
-	});
+                if (currentMembership) {
+                        console.log('[WebSocket] Rejoining list after reconnect:', currentMembership.listId);
+                        socket.emit('join-list', currentMembership);
+                }
+        });
 
 	socket.on('disconnect', () => {
 		console.log('WebSocket disconnected');
@@ -64,9 +65,10 @@ export function joinList(listId, userId, username) {
 		socket.emit('leave-list', currentListId);
 	}
 
-	currentListId = listId;
+        currentListId = listId;
+        currentMembership = { listId, userId, username };
 
-	const joinData = { listId, userId, username };
+        const joinData = currentMembership;
 
 	// If socket is connected, join immediately
 	if (socket.connected) {
@@ -84,15 +86,16 @@ export function joinList(listId, userId, username) {
 
 // Leave a list room
 export function leaveList(listId) {
-	if (!socket || !listId) return;
+        if (!socket || !listId) return;
 
-	socket.emit('leave-list', listId);
+        socket.emit('leave-list', listId);
 
-	if (currentListId === listId) {
-		currentListId = null;
-	}
+        if (currentListId === listId) {
+                currentListId = null;
+                currentMembership = null;
+        }
 
-	console.log('Left list:', listId);
+        console.log('Left list:', listId);
 }
 
 // Listen for todo events
