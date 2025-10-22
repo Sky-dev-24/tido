@@ -2229,8 +2229,8 @@ setContext('mobile-dnd', {
 			<div class="header-left">
 				<div class="user-info">
 					<span class="welcome">Welcome, <strong>{data.user.username}</strong>!</span>
-					{#if data.user.is_admin}
-						<a href="/admin" class="admin-link">Admin Dashboard</a>
+                                        {#if data.user.is_admin && !isMobile}
+                                                <a href="/admin" class="admin-link">Admin Dashboard</a>
 					{/if}
 					<div class="connection-status" class:connected={$connectionState === 'connected'} class:disconnected={$connectionState === 'disconnected'} class:error={$connectionState === 'error'} title="Connection status: {$connectionState}">
 						<span class="status-dot"></span>
@@ -2849,16 +2849,13 @@ setContext('mobile-dnd', {
 			<div class="settings-section">
 				<h3>Appearance</h3>
 
-				<div class="setting-item">
-					<label for="theme-select">
-						<span class="setting-label">Color Theme</span>
-						<span class="setting-description">Choose your preferred color scheme</span>
-					</label>
-					<select
-						id="theme-select"
-						class="setting-select"
-						bind:value={currentTheme}
-						onchange={() => changeTheme(currentTheme)}
+                                <div class="setting-item">
+                                        <label for="theme-select" class="setting-label">Color Theme</label>
+                                        <select
+                                                id="theme-select"
+                                                class="setting-select"
+                                                bind:value={currentTheme}
+                                                onchange={() => changeTheme(currentTheme)}
 					>
 						{#each Object.entries(themes) as [key, theme]}
 							<option value={key}>{theme.name}</option>
@@ -2866,16 +2863,13 @@ setContext('mobile-dnd', {
 					</select>
 				</div>
 
-				<div class="setting-item">
-					<label for="density-select">
-						<span class="setting-label">View Density</span>
-						<span class="setting-description">Adjust spacing and sizing of tasks</span>
-					</label>
-					<select
-						id="density-select"
-						class="setting-select"
-						bind:value={currentViewDensity}
-						onchange={() => changeViewDensity(currentViewDensity)}
+                                <div class="setting-item">
+                                        <label for="density-select" class="setting-label">View Density</label>
+                                        <select
+                                                id="density-select"
+                                                class="setting-select"
+                                                bind:value={currentViewDensity}
+                                                onchange={() => changeViewDensity(currentViewDensity)}
 					>
 						{#each Object.entries(viewDensities) as [key, density]}
 							<option value={key}>{density.name}</option>
@@ -2883,15 +2877,12 @@ setContext('mobile-dnd', {
 					</select>
 				</div>
 
-				<div class="setting-item">
-					<label for="dark-mode-toggle">
-						<span class="setting-label">Dark Mode</span>
-						<span class="setting-description">Use dark theme for reduced eye strain</span>
-					</label>
-					<button
-						id="dark-mode-toggle"
-						class="setting-toggle-btn"
-						onclick={toggleDarkMode}
+                                <div class="setting-item">
+                                        <label for="dark-mode-toggle" class="setting-label">Dark Mode</label>
+                                        <button
+                                                id="dark-mode-toggle"
+                                                class="setting-toggle-btn"
+                                                onclick={toggleDarkMode}
 					>
 						{darkMode ? 'On' : 'Off'}
 					</button>
@@ -2949,12 +2940,21 @@ setContext('mobile-dnd', {
 			{/if}
 
 			<div class="mobile-menu-section">
-				<button class="mobile-menu-action-btn" onclick={() => { fetchArchivedLists(); showArchivedListsModal = true; showMobileMenu = false; }}>
-					Archived Lists
-				</button>
-				<button class="mobile-menu-action-btn" onclick={() => { showSettingsModal = true; showMobileMenu = false; }}>
-					⚙️ Settings
-				</button>
+                                <button class="mobile-menu-action-btn" onclick={() => { fetchArchivedLists(); showArchivedListsModal = true; showMobileMenu = false; }}>
+                                        Archived Lists
+                                </button>
+                                {#if data.user.is_admin}
+                                        <a
+                                                href="/admin"
+                                                class="mobile-menu-action-btn"
+                                                onclick={() => { showMobileMenu = false; }}
+                                        >
+                                                Admin Dashboard
+                                        </a>
+                                {/if}
+                                <button class="mobile-menu-action-btn" onclick={() => { showSettingsModal = true; showMobileMenu = false; }}>
+                                        ⚙️ Settings
+                                </button>
 			</div>
 		</nav>
 	</div>
@@ -4434,50 +4434,35 @@ setContext('mobile-dnd', {
 		border-bottom: 2px solid var(--color-card-border, #e0e0e0);
 	}
 
-	.setting-item {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		padding: 1rem;
-		margin-bottom: 0.75rem;
-		background: #f8f9fa;
-		border-radius: 8px;
-		gap: 1rem;
-	}
+        .setting-item {
+                display: flex;
+                flex-direction: column;
+                align-items: flex-start;
+                padding: 1rem;
+                margin-bottom: 0.75rem;
+                background: #f8f9fa;
+                border-radius: 8px;
+                gap: 0.75rem;
+        }
 
-	.setting-item label {
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-		flex: 1;
-		min-width: 200px;
-	}
+        .setting-label {
+                font-weight: 600;
+                color: var(--color-text, #2c3e50);
+                font-size: 0.95rem;
+        }
 
-	.setting-label {
-		font-weight: 600;
-		color: var(--color-text, #2c3e50);
-		font-size: 0.95rem;
-		white-space: nowrap;
-	}
-
-	.setting-description {
-		font-size: 0.85rem;
-		color: var(--color-text-secondary, #666);
-		line-height: 1.4;
-	}
-
-	.setting-select {
-		padding: 0.5rem 0.75rem;
-		border: 2px solid var(--color-card-border, #e0e0e0);
-		border-radius: 6px;
-		background: white;
-		color: var(--color-text, #2c3e50);
-		font-size: 0.9rem;
-		font-weight: 500;
-		cursor: pointer;
-		transition: all 0.2s;
-		min-width: 180px;
-	}
+        .setting-select {
+                padding: 0.5rem 0.75rem;
+                border: 2px solid var(--color-card-border, #e0e0e0);
+                border-radius: 6px;
+                background: white;
+                color: var(--color-text, #2c3e50);
+                font-size: 0.9rem;
+                font-weight: 500;
+                cursor: pointer;
+                transition: all 0.2s;
+                width: 100%;
+        }
 
 	.setting-select:hover {
 		border-color: var(--color-primary, #667eea);
@@ -4857,12 +4842,8 @@ setContext('mobile-dnd', {
 		color: #e0e0e0;
 	}
 
-	:global(body.dark-mode) .setting-description {
-		color: #9a9eb8;
-	}
-
-	:global(body.dark-mode) .setting-select {
-		background: #353549;
+        :global(body.dark-mode) .setting-select {
+                background: #353549;
 		border-color: #404057;
 		color: #e0e0e0;
 	}
@@ -5105,22 +5086,23 @@ setContext('mobile-dnd', {
 		font-weight: 600;
 	}
 
-	.mobile-menu-action-btn {
-		width: 100%;
-		padding: 0.875rem;
-		background: #f8f9fa;
-		color: var(--color-text, #2c3e50);
-		border: 2px solid transparent;
-		border-radius: 8px;
-		font-weight: 600;
-		cursor: pointer;
-		transition: all 0.2s;
-		min-height: 48px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		margin-top: 0.5rem;
-	}
+        .mobile-menu-action-btn {
+                width: 100%;
+                padding: 0.875rem;
+                background: #f8f9fa;
+                color: var(--color-text, #2c3e50);
+                border: 2px solid transparent;
+                border-radius: 8px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.2s;
+                min-height: 48px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin-top: 0.5rem;
+                text-decoration: none;
+        }
 
 	.mobile-menu-action-btn:hover {
 		background: #e9ecef;
