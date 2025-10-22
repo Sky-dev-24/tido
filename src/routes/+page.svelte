@@ -1003,7 +1003,7 @@ $effect(() => {
 		}
 	}
 
-	onDestroy(() => {
+onDestroy(() => {
         if (detachResizeListener) {
                 detachResizeListener();
         }
@@ -1042,6 +1042,716 @@ $effect(() => {
         if (browser) {
                 disconnectWebSocket();
         }
+});
+
+async function fetchLists() {
+        const response = await fetch('/api/lists');
+        const fetchedLists = await response.json();
+
+        // Sort lists: personal list first, then others
+        lists = fetchedLists.sort((a, b) => {
+                const aIsPersonal = a.name === 'My Tasks' && a.member_count === 1;
+                const bIsPersonal = b.name === 'My Tasks' && b.member_count === 1;
+
+                if (aIsPersonal && !bIsPersonal) return -1;
+                if (!aIsPersonal && bIsPersonal) return 1;
+                return 0;
+        });
+
+        if (!lists.length) {
+                currentList = null;
+                currentListMembers = [];
+                todos = [];
+                return;
+        }
+
+        let selected = currentList ? lists.find((list) => list.id === currentList.id) : null;
+        if (!selected) {
+                selected = lists[0];
+        }
+
+        if (!currentList || currentList.id !== selected.id) {
+                await selectList(selected);
+        } else {
+                currentList = selected;
+                await fetchListMembers(selected.id);
+                await fetchTodos();
+        }
+}
+
+async function fetchInvitations() {
+        const response = await fetch('/api/invitations');
+        invitations = await response.json();
+}
+
+async function fetchListMembers(listId) {
+        if (!listId) {
+                currentListMembers = [];
+                return;
+        }
+
+        try {
+                const response = await fetch(`/api/lists/members?listId=${listId}`);
+                if (response.ok) {
+                        const members = await response.json();
+                        currentListMembers = members;
+                } else {
+                        currentListMembers = [];
+                }
+        } catch (error) {
+                console.error('Failed to fetch list members', error);
+                currentListMembers = [];
+        }
+}
+
+async function fetchTodos() {
+        if (!currentList) return;
+
+        const response = await fetch(`/api/todos?listId=${currentList.id}`);
+        if (response.ok) {
+                const fetched = await response.json();
+                todos = fetched;
+                maintainExpandedState(fetched);
+
+                if (browser) {
+                        checkDueReminders();
+                }
+        }
+}
+
+async function selectList(list) {
+        if (!list) return;
+        const isDifferentList = currentList?.id !== list.id;
+        currentList = list;
+        if (isDifferentList) {
+                expandedTodos = new SvelteSet();
+                newTodoAssignee = '';
+        }
+        currentListMembers = [];
+        await fetchListMembers(list.id);
+        await fetchTodos();
+}
+
+async function createNewList() {
+        if (!newListName.trim()) {
+                return;
+        }
+
+        const response = await fetch('/api/lists', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: newListName.trim(), isShared: false })
+        });
+
+        if (response.ok) {
+                await fetchLists();
+                newListName = '';
+                showNewListModal = false;
+        }
+}
+
+async function archiveCurrentList() {
+        if (!currentList) return;
+
+        const isPersonalList = currentList.name === 'My Tasks' && currentList.member_count === 1;
+        if (isPersonalList) {
+                alert('Cannot archive your personal list');
+                return;
+        }
+
+        if (currentList.permission_level !== 'admin') {
+                alert('Only list administrators can archive lists');
+                return;
+        }
+
+        const confirmArchive = confirm(
+                `Are you sure you want to archive "${currentList.name}"? You can restore it later from the archived lists.`
+        );
+
+        if (!confirmArchive) return;
+
+        const response = await fetch('/api/lists', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ listId: currentList.id, action: 'archive' })
+        });
+
+        if (response.ok) {
+                currentList = null;
+                todos = [];
+                await fetchLists();
+                if (lists.length > 0) {
+                        await selectList(lists[0]);
+                }
+        } else {
+                const error = await response.json();
+                alert(error.error || 'Failed to archive list');
+        }
+}
+
+async function fetchArchivedLists() {
+        const response = await fetch('/api/lists?archived=true');
+        if (response.ok) {
+                archivedLists = await response.json();
+        }
+}
+
+async function restoreList(listId) {
+        const response = await fetch('/api/lists', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ listId, action: 'restore' })
+        });
+
+        if (response.ok) {
+                await fetchArchivedLists();
+                await fetchLists();
+                alert('List restored successfully!');
+        } else {
+                const error = await response.json();
+                alert(error.error || 'Failed to restore list');
+        }
+}
+
+async function permanentlyDeleteList(listId, listName) {
+        const confirmDelete = confirm(
+                `Are you sure you want to permanently delete "${listName}"? This action cannot be undone and will delete all tasks in this list.`
+        );
+
+        if (!confirmDelete) return;
+
+        const response = await fetch('/api/lists', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ listId })
+        });
+
+        if (response.ok) {
+                await fetchArchivedLists();
+                alert('List permanently deleted');
+        } else {
+                const error = await response.json();
+                alert(error.error || 'Failed to delete list');
+        }
+}
+
+async function inviteUser() {
+        if (!inviteUsername.trim()) {
+                return;
+        }
+
+        const response = await fetch('/api/invitations', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                        action: 'create',
+                        listId: currentList.id,
+                        username: inviteUsername.trim(),
+                        permissionLevel: invitePermission
+                })
+        });
+
+        if (response.ok) {
+                inviteUsername = '';
+                invitePermission = 'editor';
+                showInviteModal = false;
+                alert('Invitation sent successfully!');
+        } else {
+                const error = await response.json();
+                alert(error.error || 'Failed to send invitation');
+        }
+}
+
+async function acceptInvitation(invitationId) {
+        const response = await fetch('/api/invitations', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'accept', invitationId })
+        });
+
+        if (response.ok) {
+                await fetchLists();
+                await fetchInvitations();
+                showInvitationsModal = false;
+        }
+}
+
+async function rejectInvitation(invitationId) {
+        const response = await fetch('/api/invitations', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'reject', invitationId })
+        });
+
+        if (response.ok) {
+                await fetchInvitations();
+        }
+}
+
+async function addTodo() {
+        if (!newTodoText.trim() || !currentList) {
+                return;
+        }
+
+        const isRecurringTask = newTodoMode === 'recurring';
+        const recurrenceValue = isRecurringTask ? recurrencePattern : null;
+        const dueDateValue = newTodoMode === 'deadline' ? newTodoDueDate || null : null;
+        const reminderValue =
+                newTodoMode === 'deadline' && newTodoReminder ? Number(newTodoReminder) : null;
+        const priorityValue = resolvePriorityKey(newTodoPriority);
+
+        const response = await fetch('/api/todos', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                        listId: currentList.id,
+                        text: newTodoText.trim(),
+                        isRecurring: isRecurringTask,
+                        recurrencePattern: recurrenceValue,
+                        dueDate: dueDateValue,
+                        reminderMinutesBefore: reminderValue,
+                        priority: priorityValue,
+                        assignedTo: newTodoAssignee ? Number(newTodoAssignee) : null
+                })
+        });
+
+        if (response.ok) {
+                await fetchTodos();
+                newTodoText = '';
+                newTodoMode = 'single';
+                recurrencePattern = 'daily';
+                newTodoDueDate = '';
+                newTodoReminder = '';
+                newTodoPriority = 'medium';
+                newTodoAssignee = '';
+        }
+}
+
+async function toggleTodo(id, currentCompleted) {
+        const response = await fetch('/api/todos', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                        id,
+                        completed: !currentCompleted
+                })
+        });
+
+        if (response.ok) {
+                await fetchTodos();
+        } else {
+                const error = await response.json();
+                alert(error.error || 'Failed to update todo');
+        }
+}
+
+async function updateTodoText(id, text) {
+        const trimmed = text.trim();
+        if (!trimmed) {
+                return false;
+        }
+
+        const response = await fetch('/api/todos', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, text: trimmed })
+        });
+
+        if (response.ok) {
+                await fetchTodos();
+                return true;
+        }
+        return false;
+}
+
+async function updateTodoPriority(id, priority) {
+        const normalized = resolvePriorityKey(priority);
+        const response = await fetch('/api/todos', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, priority: normalized })
+        });
+
+        if (response.ok) {
+                await fetchTodos();
+                return true;
+        }
+        return false;
+}
+
+async function updateTodoDueDate(id, dueDate) {
+        const response = await fetch('/api/todos', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, dueDate })
+        });
+
+        if (response.ok) {
+                await fetchTodos();
+                return true;
+        }
+        return false;
+}
+
+async function updateTodoNotes(id, notes) {
+        const response = await fetch('/api/todos', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, notes })
+        });
+
+        if (response.ok) {
+                await fetchTodos();
+                return true;
+        }
+        return false;
+}
+
+async function updateTodoAssignee(id, assigneeId) {
+        const response = await fetch('/api/todos', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, assignedTo: assigneeId })
+        });
+
+        if (response.ok) {
+                await fetchTodos();
+                return true;
+        }
+        return false;
+}
+
+async function deleteTodo(id) {
+        const response = await fetch('/api/todos', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id })
+        });
+
+        if (response.ok) {
+                await fetchTodos();
+                if (showRecentlyDeletedModal && currentList) {
+                        await fetchDeletedTodos();
+                }
+        } else {
+                const error = await response.json();
+                alert(error.error || 'Failed to delete todo');
+        }
+}
+
+async function uploadAttachment(todoId, file) {
+        if (!file) return false;
+
+        const formData = new FormData();
+        formData.append('todoId', String(todoId));
+        formData.append('attachment', file);
+
+        const response = await fetch('/api/attachments', {
+                method: 'POST',
+                body: formData
+        });
+
+        if (response.ok) {
+                await fetchTodos();
+                return true;
+        }
+        return false;
+}
+
+async function removeAttachment(attachmentId) {
+        const response = await fetch('/api/attachments', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: attachmentId })
+        });
+
+        if (response.ok) {
+                await fetchTodos();
+                return true;
+        }
+        return false;
+}
+
+async function fetchDeletedTodos() {
+        if (!currentList) return;
+
+        const response = await fetch(`/api/deleted-todos?listId=${currentList.id}`);
+        if (response.ok) {
+                deletedTodos = await response.json();
+        }
+}
+
+async function restoreTodo(id) {
+        const response = await fetch('/api/deleted-todos', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'restore', id })
+        });
+
+        if (response.ok) {
+                await fetchTodos();
+                await fetchDeletedTodos();
+        } else {
+                alert('Failed to restore todo');
+        }
+}
+
+async function permanentlyDeleteTodo(id) {
+        if (!confirm('Are you sure you want to permanently delete this item? This action cannot be undone.')) {
+                return;
+        }
+
+        const response = await fetch('/api/deleted-todos', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'permanent-delete', id })
+        });
+
+        if (response.ok) {
+                await fetchDeletedTodos();
+        } else {
+                alert('Failed to permanently delete todo');
+        }
+}
+
+async function openRecentlyDeleted() {
+        showRecentlyDeletedModal = true;
+        await fetchDeletedTodos();
+}
+
+async function deleteAllDeletedTodos() {
+        if (!currentList) return;
+
+        if (!confirm('Are you sure you want to permanently delete ALL items? This action cannot be undone.')) {
+                return;
+        }
+
+        const response = await fetch('/api/deleted-todos', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'delete-all', listId: currentList.id })
+        });
+
+        if (response.ok) {
+                await fetchDeletedTodos();
+        } else {
+                alert('Failed to delete all items');
+        }
+}
+
+function openMobileActionSheet(payload) {
+        if (!payload?.todo) {
+                return;
+        }
+        mobileActionSheet = {
+                open: true,
+                todoId: payload.todo.id,
+                snapshot: payload.todo,
+                actions: payload.actions ?? {}
+        };
+}
+
+function closeMobileActionSheet() {
+        mobileActionSheet = { open: false, todoId: null, snapshot: null, actions: {} };
+}
+
+async function handleMobileSheetAction(actionKey) {
+        const todo = mobileActionTodo;
+        if (!todo) {
+                closeMobileActionSheet();
+                return;
+        }
+
+        const actions = mobileActionSheet.actions ?? {};
+        const handler = actions[actionKey];
+
+        try {
+                if (typeof handler === 'function') {
+                        const result = handler();
+                        if (result instanceof Promise) {
+                                await result;
+                        }
+                } else {
+                        switch (actionKey) {
+                                case 'markComplete':
+                                        await toggleTodo(todo.id, todo.completed);
+                                        break;
+                                case 'deleteTodo':
+                                        await deleteTodo(todo.id);
+                                        break;
+                                case 'toggleExpanded':
+                                        toggleExpanded(todo.id);
+                                        break;
+                                default:
+                                        break;
+                        }
+                }
+        } finally {
+                closeMobileActionSheet();
+        }
+}
+
+function registerTodoElement(id, element) {
+        if (!id || !element) return;
+        todoElementRegistry.set(id, element);
+}
+
+function unregisterTodoElement(id) {
+        if (!id) return;
+        todoElementRegistry.delete(id);
+}
+
+function cleanupMobileDragListeners() {
+        if (typeof window === 'undefined') {
+                return;
+        }
+        window.removeEventListener('pointermove', handleMobileDragMove);
+        window.removeEventListener('pointerup', handleMobileDragEnd);
+        window.removeEventListener('pointercancel', handleMobileDragEnd);
+}
+
+function startMobileDrag(payload, event) {
+        if (!payload?.todo || sortMode !== 'manual') {
+                return;
+        }
+        if (!hasCoarsePointer && !isMobile) {
+                return;
+        }
+        if (payload.level !== 0) {
+                return;
+        }
+
+        const index = filteredRootTodos.findIndex((item) => item.id === payload.todo.id);
+        if (index === -1) {
+                return;
+        }
+
+        event?.preventDefault?.();
+        event?.stopPropagation?.();
+
+        mobileDragState = {
+                active: true,
+                todoId: payload.todo.id,
+                pointerId: event?.pointerId ?? null,
+                startIndex: index,
+                currentIndex: index
+        };
+
+        draggedTodo = payload.todo;
+        dragOverTodo = payload.todo;
+
+        window.addEventListener('pointermove', handleMobileDragMove, { passive: false });
+        window.addEventListener('pointerup', handleMobileDragEnd);
+        window.addEventListener('pointercancel', handleMobileDragEnd);
+}
+
+function updateMobileDragTarget(clientY) {
+        if (!mobileDragState.active) {
+                return;
+        }
+
+        const list = filteredRootTodos;
+        if (!list.length) {
+                return;
+        }
+
+        let targetIndex = list.findIndex((item) => {
+                const element = todoElementRegistry.get(item.id);
+                if (!element) return false;
+                const rect = element.getBoundingClientRect();
+                return clientY >= rect.top && clientY <= rect.bottom;
+        });
+
+        if (targetIndex === -1) {
+                const firstElement = todoElementRegistry.get(list[0].id);
+                const lastElement = todoElementRegistry.get(list[list.length - 1].id);
+                if (firstElement) {
+                        const firstRect = firstElement.getBoundingClientRect();
+                        if (clientY < firstRect.top) {
+                                targetIndex = 0;
+                        }
+                }
+                if (targetIndex === -1 && lastElement) {
+                        const lastRect = lastElement.getBoundingClientRect();
+                        if (clientY > lastRect.bottom) {
+                                targetIndex = list.length - 1;
+                        }
+                }
+        }
+
+        if (targetIndex !== -1 && targetIndex !== mobileDragState.currentIndex) {
+                mobileDragState = {
+                        ...mobileDragState,
+                        currentIndex: targetIndex
+                };
+                dragOverTodo = list[targetIndex];
+        }
+}
+
+function handleMobileDragMove(event) {
+        if (!mobileDragState.active) {
+                return;
+        }
+        if (mobileDragState.pointerId != null && event.pointerId !== mobileDragState.pointerId) {
+                return;
+        }
+        event.preventDefault();
+        updateMobileDragTarget(event.clientY);
+}
+
+async function handleMobileDragEnd(event) {
+        if (!mobileDragState.active) {
+                return;
+        }
+        if (mobileDragState.pointerId != null && event.pointerId !== mobileDragState.pointerId) {
+                return;
+        }
+
+        cleanupMobileDragListeners();
+
+        const { startIndex, currentIndex } = mobileDragState;
+        mobileDragState = {
+                active: false,
+                todoId: null,
+                pointerId: null,
+                startIndex: -1,
+                currentIndex: -1
+        };
+
+        const list = filteredRootTodos;
+        dragOverTodo = null;
+        draggedTodo = null;
+        dragOverTopZone = false;
+
+        if (startIndex === -1 || currentIndex === -1 || startIndex === currentIndex) {
+                return;
+        }
+
+        const newOrder = [...list];
+        const [moved] = newOrder.splice(startIndex, 1);
+        newOrder.splice(currentIndex, 0, moved);
+        await submitReorder(newOrder);
+}
+
+setContext('todo-actions', {
+        toggleTodoComplete: (id, completed) => toggleTodo(id, completed),
+        deleteTodo,
+        toggleExpanded,
+        isExpanded,
+        addSubtask,
+        priorityLabel: getPriorityLabel,
+        priorityClass: (value) => `priority-${resolvePriorityKey(value)}`,
+        updateTodoText,
+        updateTodoPriority,
+        updateTodoDueDate,
+        updateTodoNotes,
+        updateTodoAssignee,
+        uploadAttachment,
+        removeAttachment,
+        getListMembers: () => currentListMembers,
+        getEditingUser: (todoId) => todoEditingState.get(todoId),
+        getTypingUser: (todoId, field) => todoTypingState.get(`${todoId}:${field}`),
+        currentListId: () => currentList?.id
 });
 
 setContext('mobile-enhancements', {
