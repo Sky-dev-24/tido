@@ -2952,7 +2952,10 @@ setContext('mobile-dnd', {
                                                 Admin Dashboard
                                         </a>
                                 {/if}
-                                <button class="mobile-menu-action-btn" onclick={() => { showSettingsModal = true; showMobileMenu = false; }}>
+                                <button
+                                        class="mobile-menu-action-btn mobile-menu-settings"
+                                        onclick={() => { showSettingsModal = true; showMobileMenu = false; }}
+                                >
                                         ⚙️ Settings
                                 </button>
 			</div>
@@ -3639,20 +3642,26 @@ setContext('mobile-dnd', {
 		transform: scale(1.05);
 	}
 
-	.admin-link {
-		padding: 0.4rem 0.8rem;
-		background-color: var(--color-primary, #667eea);
-		color: white;
-		text-decoration: none;
-		border-radius: 4px;
+        .admin-link {
+                padding: 0.4rem 0.8rem;
+                background-color: var(--color-primary, #667eea);
+                color: white;
+                text-decoration: none;
+                border-radius: 4px;
 		font-size: 0.85rem;
 		font-weight: 500;
 		transition: background-color 0.2s;
 	}
 
-	.admin-link:hover {
-		background-color: var(--color-primary-hover, #5568d3);
-	}
+        .admin-link:hover {
+                background-color: var(--color-primary-hover, #5568d3);
+        }
+
+        @media (max-width: 768px) {
+                .header .admin-link {
+                        display: none;
+                }
+        }
 
 	.logout-btn {
 		padding: 0.5rem 1rem;
@@ -5102,6 +5111,10 @@ setContext('mobile-dnd', {
                 justify-content: center;
                 margin-top: 0.5rem;
                 text-decoration: none;
+        }
+
+        .mobile-menu-settings {
+                margin-top: 0;
         }
 
 	.mobile-menu-action-btn:hover {
