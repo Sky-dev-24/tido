@@ -4159,16 +4159,16 @@ setContext('mobile-dnd', {
 		z-index: 1000;
 	}
 
-	.modal {
-		background: white;
-		border-radius: 12px;
-		padding: 2rem;
-		min-width: 400px;
-		max-width: 90vw;
-		max-height: 90vh;
-		overflow-y: auto;
-		box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-	}
+        .modal {
+                background: white;
+                border-radius: 12px;
+                padding: 2rem;
+                width: min(480px, 90vw);
+                max-width: 90vw;
+                max-height: 90vh;
+                overflow-y: auto;
+                box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        }
 
 	.modal h2 {
 		margin: 0 0 1.5rem 0;
@@ -5253,14 +5253,43 @@ setContext('mobile-dnd', {
 			font-size: 0.8rem;
 		}
 
-		/* Better spacing for mobile */
-		.main-content {
-			padding: 1rem;
-		}
+                /* Better spacing for mobile */
+                .main-content {
+                        padding: 1rem;
+                }
 
-		.input-section {
-			gap: 1rem;
-		}
+                /* Settings modal adjustments */
+                .modal {
+                        width: calc(100vw - 2rem);
+                        min-width: 0;
+                        padding: 1.5rem;
+                        margin: 0 1rem;
+                }
+
+                .settings-section {
+                        margin-bottom: 1.25rem;
+                }
+
+                .setting-item {
+                        flex-direction: column;
+                        align-items: stretch;
+                        gap: 0.75rem;
+                }
+
+                .setting-item label {
+                        width: 100%;
+                        min-width: 0;
+                }
+
+                .setting-select,
+                .setting-toggle-btn {
+                        width: 100%;
+                        min-width: 0;
+                }
+
+                .input-section {
+                        gap: 1rem;
+                }
 
 		.input-with-tools {
 			position: relative;
