@@ -1727,10 +1727,46 @@ async function handleMobileDragEnd(event) {
                 return;
         }
 
-        const newOrder = [...list];
-        const [moved] = newOrder.splice(startIndex, 1);
-        newOrder.splice(currentIndex, 0, moved);
-        await submitReorder(newOrder);
+        const reorderedVisible = [...list];
+        const [moved] = reorderedVisible.splice(startIndex, 1);
+        reorderedVisible.splice(currentIndex, 0, moved);
+
+        const fullList = sortedRootTodos;
+        const movedId = moved?.id;
+        const movedFullIndex = fullList.findIndex((item) => item.id === movedId);
+
+        if (movedFullIndex === -1) {
+                await submitReorder(fullList);
+                return;
+        }
+
+        const newFullOrder = fullList.filter((item) => item.id !== movedId);
+        const visibleIndex = reorderedVisible.findIndex((item) => item.id === movedId);
+        const previousVisible = visibleIndex > 0 ? reorderedVisible[visibleIndex - 1] : null;
+        const nextVisible =
+                visibleIndex !== -1 && visibleIndex < reorderedVisible.length - 1
+                        ? reorderedVisible[visibleIndex + 1]
+                        : null;
+
+        if (previousVisible) {
+                const previousIndex = newFullOrder.findIndex((item) => item.id === previousVisible.id);
+                if (previousIndex !== -1) {
+                        newFullOrder.splice(previousIndex + 1, 0, moved);
+                } else {
+                        newFullOrder.splice(Math.min(movedFullIndex, newFullOrder.length), 0, moved);
+                }
+        } else if (nextVisible) {
+                const nextIndex = newFullOrder.findIndex((item) => item.id === nextVisible.id);
+                if (nextIndex !== -1) {
+                        newFullOrder.splice(nextIndex, 0, moved);
+                } else {
+                        newFullOrder.splice(Math.min(movedFullIndex, newFullOrder.length), 0, moved);
+                }
+        } else {
+                newFullOrder.splice(Math.min(movedFullIndex, newFullOrder.length), 0, moved);
+        }
+
+        await submitReorder(newFullOrder);
 }
 
 setContext('todo-actions', {
