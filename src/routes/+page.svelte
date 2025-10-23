@@ -99,14 +99,12 @@ let newTodoInputEl;
 let mainContentEl;
 const todoElementRegistry = new Map();
 
-const defaultMobileActionSheetState = {
-        open: false,
-        todoId: null,
-        snapshot: null,
-        actions: {}
-};
-
-let mobileActionSheet = $state({ ...defaultMobileActionSheetState });
+let mobileActionSheet = $state({
+	open: false,
+	todoId: null,
+	snapshot: null,
+	actions: {}
+});
 
 let mobileActionTodo = $derived.by(() => {
 	if (!mobileActionSheet.open || !mobileActionSheet.todoId) {
@@ -125,95 +123,10 @@ let mobileDragState = $state({
 });
 
 $effect(() => {
-        if (mobileActionSheet.open && !mobileActionTodo) {
-                closeMobileActionSheet();
-        }
+	if (mobileActionSheet.open && !mobileActionTodo) {
+		closeMobileActionSheet();
+	}
 });
-
-function createTodoSnapshot(todo) {
-        if (!todo || typeof todo !== 'object') {
-                return null;
-        }
-
-        const withListName = {
-                ...todo,
-                list_name: todo.list_name ?? currentList?.name ?? null
-        };
-
-        try {
-                if (typeof structuredClone === 'function') {
-                        return structuredClone(withListName);
-                }
-        } catch (error) {
-                console.warn('Unable to create structured clone for mobile action sheet', error);
-        }
-
-        try {
-                return JSON.parse(JSON.stringify(withListName));
-        } catch (error) {
-                console.warn('Unable to create JSON snapshot for mobile action sheet', error);
-        }
-
-        return { ...withListName };
-}
-
-function sanitizeActionHandlers(actions) {
-        if (!actions || typeof actions !== 'object') {
-                return {};
-        }
-
-        return Object.fromEntries(
-                Object.entries(actions).filter(([, handler]) => typeof handler === 'function')
-        );
-}
-
-function openMobileActionSheet(options = {}) {
-        const { todo = null, sourceEvent = null, actions = {} } = options ?? {};
-
-        if (!todo) {
-                console.warn('Unable to open mobile action sheet without todo data');
-                return;
-        }
-
-        if (sourceEvent?.preventDefault) {
-                sourceEvent.preventDefault();
-        }
-
-        if (sourceEvent?.stopPropagation) {
-                sourceEvent.stopPropagation();
-        }
-
-        const sanitizedActions = sanitizeActionHandlers(actions);
-
-        mobileActionSheet = {
-                open: true,
-                todoId: todo.id ?? null,
-                snapshot: createTodoSnapshot(todo),
-                actions: sanitizedActions
-        };
-}
-
-function closeMobileActionSheet() {
-        mobileActionSheet = { ...defaultMobileActionSheetState };
-}
-
-function handleMobileSheetAction(actionKey) {
-        if (!actionKey) {
-                return;
-        }
-
-        const handler = mobileActionSheet.actions?.[actionKey];
-
-        closeMobileActionSheet();
-
-        if (typeof handler === 'function') {
-                try {
-                        handler();
-                } catch (error) {
-                        console.error('Failed to execute mobile sheet action', actionKey, error);
-                }
-        }
-}
 
 let totalTodoCount = $derived.by(() => todos.length);
 let activeTodoCount = $derived.by(() => todos.filter((todo) => !todo.completed).length);
