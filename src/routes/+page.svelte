@@ -1969,7 +1969,8 @@ setContext('mobile-dnd', {
 		>
 			<h2 id="settings-title">Settings</h2>
 
-                        <div class="settings-section">
+			<div class="settings-section">
+				<h3>Appearance</h3>
 
                                 <div class="setting-item">
                                         <label for="theme-select" class="setting-label">Color Theme</label>
