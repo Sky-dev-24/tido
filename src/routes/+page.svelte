@@ -79,14 +79,22 @@ let todoTypingState = $state(new SvelteMap()); // Map of "todoId:field" -> {user
 // Mobile enhancement state
 let isMobile = $state(false);
 let hasCoarsePointer = $state(false);
+let cameraCaptureSupported = $state(false);
 let isPulling = $state(false);
 let pullOffset = $state(0);
 let pullStatus = $state('Pull to refresh');
 let isRefreshing = $state(false);
 const pullThreshold = 70;
 let pullStartY = 0;
+let voiceErrorClearTimer;
 let detachResizeListener;
 
+let speechRecognition;
+let isVoiceSupported = $state(false);
+let isVoiceActive = $state(false);
+let voiceError = $state('');
+
+let cameraInputEl = $state(null);
 let newTodoInputEl;
 let mainContentEl;
 const todoElementRegistry = new Map();
@@ -242,19 +250,32 @@ function getPriorityLabel(value) {
 }
 
 function updateMobileCapabilities() {
-        if (!browser) {
-                return;
-        }
-        try {
-                const mobileQuery = window.matchMedia('(max-width: 768px)');
-                const coarseQuery = window.matchMedia('(pointer: coarse)');
-                isMobile = mobileQuery.matches;
-                hasCoarsePointer = coarseQuery.matches || 'ontouchstart' in window;
-        } catch (error) {
-                console.warn('Unable to evaluate mobile capabilities', error);
-                isMobile = false;
-                hasCoarsePointer = false;
-        }
+	if (!browser) {
+		return;
+	}
+	try {
+		const mobileQuery = window.matchMedia('(max-width: 768px)');
+		const coarseQuery = window.matchMedia('(pointer: coarse)');
+		isMobile = mobileQuery.matches;
+		hasCoarsePointer = coarseQuery.matches || 'ontouchstart' in window;
+
+		let captureSupported = false;
+		try {
+			const testInput = document.createElement('input');
+			captureSupported = 'capture' in testInput || 'accept' in testInput;
+		} catch {
+			captureSupported = false;
+		}
+
+		const mediaDevicesSupported = Boolean(navigator?.mediaDevices?.getUserMedia);
+		cameraCaptureSupported =
+			(isMobile || hasCoarsePointer) && (captureSupported || mediaDevicesSupported);
+	} catch (error) {
+		console.warn('Unable to evaluate mobile capabilities', error);
+		isMobile = false;
+		hasCoarsePointer = false;
+		cameraCaptureSupported = false;
+	}
 }
 
 function resetPullState() {
@@ -352,6 +373,103 @@ async function refreshDataFromPull() {
 		} else {
 			pullStatus = 'Pull to refresh';
 		}
+	}
+}
+
+function recordVoiceError(message) {
+	voiceError = message ?? 'Voice input error';
+	if (voiceErrorClearTimer) {
+		clearTimeout(voiceErrorClearTimer);
+	}
+	voiceErrorClearTimer = setTimeout(() => {
+		voiceError = '';
+		voiceErrorClearTimer = undefined;
+	}, 4000);
+}
+
+function toggleVoiceInput() {
+	if (!speechRecognition) {
+		recordVoiceError('Voice recognition not supported on this device');
+		return;
+	}
+	try {
+		if (isVoiceActive) {
+			speechRecognition.stop();
+		} else {
+			voiceError = '';
+			speechRecognition.start();
+		}
+	} catch (error) {
+		console.error('Failed to toggle voice input', error);
+		recordVoiceError('Unable to access microphone');
+	}
+}
+
+async function handleCameraCapture(event) {
+	const input = event.currentTarget;
+	const file = input?.files?.[0];
+	if (input) {
+		input.value = '';
+	}
+
+	if (!file) {
+		return;
+	}
+
+	if (!currentList) {
+		alert('Select a list before attaching a photo.');
+		return;
+	}
+
+	const baseText =
+		newTodoText.trim() ||
+		file.name.replace(/\.[^/.]+$/, '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim() ||
+		'New photo task';
+
+	const isRecurringTask = newTodoMode === 'recurring';
+	const recurrenceValue = isRecurringTask ? recurrencePattern : null;
+	const dueDateValue = newTodoMode === 'deadline' ? newTodoDueDate || null : null;
+	const reminderValue =
+		newTodoMode === 'deadline' && newTodoReminder ? Number(newTodoReminder) : null;
+	const priorityValue = resolvePriorityKey(newTodoPriority);
+
+	try {
+		const response = await fetch('/api/todos', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				listId: currentList.id,
+				text: baseText,
+				isRecurring: isRecurringTask,
+				recurrencePattern: recurrenceValue,
+				dueDate: dueDateValue,
+				reminderMinutesBefore: reminderValue,
+				priority: priorityValue,
+				assignedTo: newTodoAssignee ? Number(newTodoAssignee) : null
+			})
+		});
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(error?.error ?? 'Failed to create task');
+		}
+
+		const todo = await response.json();
+		const uploaded = await uploadAttachment(todo.id, file);
+		if (!uploaded) {
+			throw new Error('Failed to upload attachment');
+		}
+
+		newTodoText = '';
+		newTodoMode = 'single';
+		recurrencePattern = 'daily';
+		newTodoDueDate = '';
+		newTodoReminder = '';
+		newTodoPriority = 'medium';
+		newTodoAssignee = '';
+	} catch (error) {
+		console.error('Camera capture failed', error);
+		alert(error.message ?? 'Unable to capture photo');
 	}
 }
 
@@ -883,14 +1001,65 @@ $effect(() => {
 		updateMobileCapabilities();
 		const handleResize = () => updateMobileCapabilities();
 		window.addEventListener('resize', handleResize);
-                detachResizeListener = () => {
-                        window.removeEventListener('resize', handleResize);
-                        detachResizeListener = undefined;
-                };
+		detachResizeListener = () => {
+			window.removeEventListener('resize', handleResize);
+			detachResizeListener = undefined;
+		};
 
-                if (mainContentEl) {
-                        mainContentEl.addEventListener('touchmove', handlePullMove, { passive: false });
-                }
+		const SpeechRecognitionClass =
+			window.SpeechRecognition || window.webkitSpeechRecognition;
+		if (SpeechRecognitionClass) {
+			try {
+				speechRecognition = new SpeechRecognitionClass();
+				speechRecognition.lang = navigator.language || 'en-US';
+				speechRecognition.continuous = false;
+				speechRecognition.interimResults = false;
+				speechRecognition.maxAlternatives = 1;
+
+				speechRecognition.onstart = () => {
+					isVoiceActive = true;
+					voiceError = '';
+				};
+
+				speechRecognition.onend = () => {
+					isVoiceActive = false;
+				};
+
+				speechRecognition.onerror = (event) => {
+					isVoiceActive = false;
+					if (!event?.error) {
+						return;
+					}
+					if (event.error === 'not-allowed') {
+						recordVoiceError('Microphone permission denied');
+					} else if (event.error !== 'aborted' && event.error !== 'no-speech') {
+						recordVoiceError(`Voice input error: ${event.error}`);
+					}
+				};
+
+				speechRecognition.onresult = (event) => {
+					const transcript =
+						event?.results?.[0]?.[0]?.transcript?.trim();
+					if (transcript) {
+						newTodoText = newTodoText
+							? `${newTodoText.trim()} ${transcript}`
+							: transcript;
+					}
+				};
+
+				isVoiceSupported = true;
+			} catch (error) {
+				console.warn('Failed to initialize voice recognition', error);
+				recordVoiceError('Voice input unavailable');
+				isVoiceSupported = false;
+			}
+		} else {
+			isVoiceSupported = false;
+		}
+
+		if (mainContentEl) {
+			mainContentEl.addEventListener('touchmove', handlePullMove, { passive: false });
+		}
 
 		// Apply theme and density immediately on mount
 		applyTheme(currentTheme);
@@ -1091,49 +1260,809 @@ $effect(() => {
 	}
 
 	onDestroy(() => {
-        if (detachResizeListener) {
-                detachResizeListener();
-        }
+		if (detachResizeListener) {
+			detachResizeListener();
+		}
 
-        if (mainContentEl) {
-                mainContentEl.removeEventListener('touchmove', handlePullMove);
-        }
+	if (voiceErrorClearTimer) {
+		clearTimeout(voiceErrorClearTimer);
+		voiceErrorClearTimer = undefined;
+	}
 
-        cleanupMobileDragListeners();
-        mobileDragState = {
-                active: false,
-                todoId: null,
-                pointerId: null,
-                startIndex: -1,
-                currentIndex: -1
-        };
+	if (speechRecognition) {
+		try {
+			speechRecognition.stop();
+		} catch (error) {
+			// Ignore stop errors silently
+		}
+		speechRecognition.onstart = null;
+		speechRecognition.onend = null;
+		speechRecognition.onerror = null;
+		speechRecognition.onresult = null;
+		speechRecognition = undefined;
+	}
 
-        if (clockTimer) {
-                clearInterval(clockTimer);
-                clockTimer = undefined;
-        }
-        stopReminderChecks();
+	if (mainContentEl) {
+		mainContentEl.removeEventListener('touchmove', handlePullMove);
+	}
 
-        // Clean up WebSocket event listeners
-        if (cleanupTodoCreated) cleanupTodoCreated();
-        if (cleanupTodoUpdated) cleanupTodoUpdated();
-        if (cleanupTodoDeleted) cleanupTodoDeleted();
-        if (cleanupUserJoined) cleanupUserJoined();
-        if (cleanupUserLeft) cleanupUserLeft();
-        if (cleanupUserEditing) cleanupUserEditing();
-        if (cleanupUserStoppedEditing) cleanupUserStoppedEditing();
-        if (cleanupUserTyping) cleanupUserTyping();
-        if (cleanupUserStoppedTyping) cleanupUserStoppedTyping();
+		cleanupMobileDragListeners();
+		mobileDragState = {
+			active: false,
+			todoId: null,
+			pointerId: null,
+			startIndex: -1,
+			currentIndex: -1
+		};
 
-        // Disconnect WebSocket on component destroy
-        if (browser) {
-                disconnectWebSocket();
-        }
+		if (clockTimer) {
+			clearInterval(clockTimer);
+			clockTimer = undefined;
+		}
+		stopReminderChecks();
+
+		// Clean up WebSocket event listeners
+		if (cleanupTodoCreated) cleanupTodoCreated();
+		if (cleanupTodoUpdated) cleanupTodoUpdated();
+		if (cleanupTodoDeleted) cleanupTodoDeleted();
+		if (cleanupUserJoined) cleanupUserJoined();
+		if (cleanupUserLeft) cleanupUserLeft();
+		if (cleanupUserEditing) cleanupUserEditing();
+		if (cleanupUserStoppedEditing) cleanupUserStoppedEditing();
+		if (cleanupUserTyping) cleanupUserTyping();
+		if (cleanupUserStoppedTyping) cleanupUserStoppedTyping();
+
+		// Disconnect WebSocket on component destroy
+		if (browser) {
+			disconnectWebSocket();
+		}
+	});
+
+async function fetchLists() {
+	const response = await fetch('/api/lists');
+	const fetchedLists = await response.json();
+
+	// Sort lists: personal list first, then others
+	lists = fetchedLists.sort((a, b) => {
+		const aIsPersonal = a.name === 'My Tasks' && a.member_count === 1;
+		const bIsPersonal = b.name === 'My Tasks' && b.member_count === 1;
+
+		if (aIsPersonal && !bIsPersonal) return -1;
+		if (!aIsPersonal && bIsPersonal) return 1;
+		return 0;
+	});
+
+	if (!lists.length) {
+		currentList = null;
+		currentListMembers = [];
+		todos = [];
+		return;
+	}
+
+	let selected = currentList ? lists.find((list) => list.id === currentList.id) : null;
+	if (!selected) {
+		selected = lists[0];
+	}
+
+	if (!currentList || currentList.id !== selected.id) {
+		await selectList(selected);
+	} else {
+		currentList = selected;
+		await fetchListMembers(selected.id);
+		await fetchTodos();
+	}
+}
+
+async function fetchInvitations() {
+	const response = await fetch('/api/invitations');
+	invitations = await response.json();
+}
+
+async function fetchListMembers(listId) {
+	if (!listId) {
+		currentListMembers = [];
+		return;
+	}
+
+	try {
+		const response = await fetch(`/api/lists/members?listId=${listId}`);
+		if (response.ok) {
+			const members = await response.json();
+			currentListMembers = members;
+		} else {
+			currentListMembers = [];
+		}
+	} catch (error) {
+		console.error('Failed to fetch list members', error);
+		currentListMembers = [];
+	}
+}
+
+async function fetchTodos() {
+	if (!currentList) return;
+
+	const response = await fetch(`/api/todos?listId=${currentList.id}`);
+	if (response.ok) {
+		const fetched = await response.json();
+		todos = fetched;
+		maintainExpandedState(fetched);
+			if (browser) {
+				checkDueReminders();
+			}
+		}
+	}
+
+async function selectList(list) {
+	if (!list) return;
+	const isDifferentList = currentList?.id !== list.id;
+	currentList = list;
+	if (isDifferentList) {
+		expandedTodos = new Set();
+		newTodoAssignee = '';
+	}
+	currentListMembers = [];
+	await fetchListMembers(list.id);
+	await fetchTodos();
+}
+
+	async function createNewList() {
+		if (newListName.trim()) {
+			const response = await fetch('/api/lists', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ name: newListName.trim(), isShared: false })
+			});
+
+			if (response.ok) {
+				await fetchLists();
+				newListName = '';
+				showNewListModal = false;
+			}
+		}
+	}
+
+	async function archiveCurrentList() {
+		if (!currentList) return;
+
+		const isPersonalList = currentList.name === 'My Tasks' && currentList.member_count === 1;
+		if (isPersonalList) {
+			alert('Cannot archive your personal list');
+			return;
+		}
+
+		if (currentList.permission_level !== 'admin') {
+			alert('Only list administrators can archive lists');
+			return;
+		}
+
+		const confirmArchive = confirm(`Are you sure you want to archive "${currentList.name}"? You can restore it later from the archived lists.`);
+
+		if (!confirmArchive) return;
+
+		const response = await fetch('/api/lists', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ listId: currentList.id, action: 'archive' })
+		});
+
+		if (response.ok) {
+			currentList = null;
+			todos = [];
+			await fetchLists();
+			// Select first available list
+			if (lists.length > 0) {
+				await selectList(lists[0]);
+			}
+		} else {
+			const error = await response.json();
+			alert(error.error || 'Failed to archive list');
+		}
+	}
+
+	async function fetchArchivedLists() {
+		const response = await fetch('/api/lists?archived=true');
+		if (response.ok) {
+			archivedLists = await response.json();
+		}
+	}
+
+	async function restoreList(listId) {
+		const response = await fetch('/api/lists', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ listId, action: 'restore' })
+		});
+
+		if (response.ok) {
+			await fetchArchivedLists();
+			await fetchLists();
+			alert('List restored successfully!');
+		} else {
+			const error = await response.json();
+			alert(error.error || 'Failed to restore list');
+		}
+	}
+
+	async function permanentlyDeleteList(listId, listName) {
+		const confirmDelete = confirm(`Are you sure you want to permanently delete "${listName}"? This action cannot be undone and will delete all tasks in this list.`);
+
+		if (!confirmDelete) return;
+
+		const response = await fetch('/api/lists', {
+			method: 'DELETE',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ listId })
+		});
+
+		if (response.ok) {
+			await fetchArchivedLists();
+			alert('List permanently deleted');
+		} else {
+			const error = await response.json();
+			alert(error.error || 'Failed to delete list');
+		}
+	}
+
+	async function inviteUser() {
+		if (inviteUsername.trim()) {
+			const response = await fetch('/api/invitations', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					action: 'create',
+					listId: currentList.id,
+					username: inviteUsername.trim(),
+					permissionLevel: invitePermission
+				})
+			});
+
+			if (response.ok) {
+				inviteUsername = '';
+				invitePermission = 'editor';
+				showInviteModal = false;
+				alert('Invitation sent successfully!');
+			} else {
+				const error = await response.json();
+				alert(error.error || 'Failed to send invitation');
+			}
+		}
+	}
+
+	async function acceptInvitation(invitationId) {
+		const response = await fetch('/api/invitations', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ action: 'accept', invitationId })
+		});
+
+		if (response.ok) {
+			await fetchLists();
+			await fetchInvitations();
+			showInvitationsModal = false;
+		}
+	}
+
+	async function rejectInvitation(invitationId) {
+		const response = await fetch('/api/invitations', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ action: 'reject', invitationId })
+		});
+
+		if (response.ok) {
+			await fetchInvitations();
+		}
+	}
+
+	async function addTodo() {
+		if (newTodoText.trim() && currentList) {
+			const isRecurringTask = newTodoMode === 'recurring';
+			const recurrenceValue = isRecurringTask ? recurrencePattern : null;
+			const dueDateValue = newTodoMode === 'deadline' ? (newTodoDueDate || null) : null;
+			const reminderValue =
+				newTodoMode === 'deadline' && newTodoReminder
+					? Number(newTodoReminder)
+					: null;
+			const priorityValue = resolvePriorityKey(newTodoPriority);
+
+		const response = await fetch('/api/todos', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				listId: currentList.id,
+				text: newTodoText.trim(),
+				isRecurring: isRecurringTask,
+				recurrencePattern: recurrenceValue,
+				dueDate: dueDateValue,
+				reminderMinutesBefore: reminderValue,
+				priority: priorityValue,
+				assignedTo: newTodoAssignee ? Number(newTodoAssignee) : null
+			})
+		});
+
+		if (response.ok) {
+			await fetchTodos();
+			newTodoText = '';
+			newTodoMode = 'single';
+			recurrencePattern = 'daily';
+			newTodoDueDate = '';
+			newTodoReminder = '';
+			newTodoPriority = 'medium';
+			newTodoAssignee = '';
+		}
+	}
+}
+
+	async function toggleTodo(id, currentCompleted) {
+		const response = await fetch('/api/todos', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				id,
+				completed: !currentCompleted
+			})
+		});
+
+		if (response.ok) {
+			await fetchTodos();
+		} else {
+			const error = await response.json();
+
+			// Revert the UI state by refetching
+			await fetchTodos();
+
+			if (error.error === 'Cannot complete parent task with incomplete subtasks') {
+				alert('Cannot complete this task until all subtasks are completed.');
+			} else {
+				alert('Failed to update task: ' + (error.error || 'Unknown error'));
+			}
+		}
+	}
+
+	async function updateTodoText(id, text) {
+		const response = await fetch('/api/todos', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ id, text })
+		});
+
+		if (response.ok) {
+			await fetchTodos();
+		} else {
+			alert('Failed to update task text');
+			await fetchTodos();
+		}
+	}
+
+	async function updateTodoPriority(id, priority) {
+		const response = await fetch('/api/todos', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ id, priority })
+		});
+
+		if (response.ok) {
+			await fetchTodos();
+		} else {
+			alert('Failed to update priority');
+			await fetchTodos();
+		}
+	}
+
+	async function updateTodoDueDate(id, dueDate) {
+		const response = await fetch('/api/todos', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ id, due_date: dueDate })
+		});
+
+		if (response.ok) {
+			await fetchTodos();
+		} else {
+			alert('Failed to update due date');
+			await fetchTodos();
+		}
+	}
+
+async function updateTodoNotes(id, notes) {
+	const response = await fetch('/api/todos', {
+		method: 'PATCH',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ id, notes })
+	});
+
+	if (response.ok) {
+		await fetchTodos();
+	} else {
+		alert('Failed to update notes');
+		await fetchTodos();
+	}
+}
+
+	async function updateTodoAssignee(id, assigneeId) {
+		const payload = {
+			id,
+			assigned_to: assigneeId ?? null
+		};
+
+		const response = await fetch('/api/todos', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(payload)
+		});
+
+		if (response.ok) {
+			await fetchTodos();
+			return true;
+		}
+
+		try {
+			const error = await response.json();
+			alert(error?.error ?? 'Failed to update assignment');
+		} catch (error) {
+			console.error('Failed to update assignment', error);
+			alert('Failed to update assignment');
+		}
+
+		await fetchTodos();
+		return false;
+	}
+
+	async function uploadAttachment(todoId, file) {
+		if (!file) return false;
+
+		const formData = new FormData();
+		formData.append('todoId', todoId);
+		formData.append('file', file);
+
+		const response = await fetch('/api/todos/attachments', {
+			method: 'POST',
+			body: formData
+		});
+
+		if (response.ok) {
+			await fetchTodos();
+			return true;
+		}
+
+		try {
+			const error = await response.json();
+			alert(error?.error ?? 'Failed to upload attachment');
+		} catch (error) {
+			console.error('Failed to upload attachment', error);
+			alert('Failed to upload attachment');
+		}
+
+		await fetchTodos();
+		return false;
+	}
+
+	async function removeAttachment(attachmentId) {
+		const response = await fetch(`/api/todos/attachments/${attachmentId}`, {
+			method: 'DELETE'
+		});
+
+		if (response.ok) {
+			await fetchTodos();
+			return true;
+		}
+
+		try {
+			const error = await response.json();
+			alert(error?.error ?? 'Failed to delete attachment');
+		} catch (error) {
+			console.error('Failed to delete attachment', error);
+			alert('Failed to delete attachment');
+		}
+
+		await fetchTodos();
+		return false;
+	}
+
+async function deleteTodo(id) {
+	const response = await fetch('/api/todos', {
+		method: 'DELETE',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ id })
+	});
+
+	if (response.ok) {
+		await fetchTodos();
+		// Also refresh deleted todos if modal is open
+		if (showRecentlyDeletedModal && currentList) {
+			await fetchDeletedTodos();
+		}
+	}
+}
+
+async function fetchDeletedTodos() {
+	if (!currentList) return;
+
+	const response = await fetch(`/api/deleted-todos?listId=${currentList.id}`);
+	if (response.ok) {
+		deletedTodos = await response.json();
+	}
+}
+
+async function restoreTodo(id) {
+	const response = await fetch('/api/deleted-todos', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ action: 'restore', id })
+	});
+
+	if (response.ok) {
+		await fetchTodos();
+		await fetchDeletedTodos();
+	} else {
+		alert('Failed to restore todo');
+	}
+}
+
+async function permanentlyDeleteTodo(id) {
+	if (!confirm('Are you sure you want to permanently delete this item? This action cannot be undone.')) {
+		return;
+	}
+
+	const response = await fetch('/api/deleted-todos', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ action: 'permanent-delete', id })
+	});
+
+	if (response.ok) {
+		await fetchDeletedTodos();
+	} else {
+		alert('Failed to permanently delete todo');
+	}
+}
+
+async function openRecentlyDeleted() {
+	showRecentlyDeletedModal = true;
+	await fetchDeletedTodos();
+}
+
+async function deleteAllDeletedTodos() {
+	if (!currentList) return;
+
+	if (!confirm('Are you sure you want to permanently delete ALL items? This action cannot be undone.')) {
+		return;
+	}
+
+	const response = await fetch('/api/deleted-todos', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ action: 'delete-all', listId: currentList.id })
+	});
+
+	if (response.ok) {
+		await fetchDeletedTodos();
+	} else {
+		alert('Failed to delete all items');
+	}
+}
+
+function openMobileActionSheet(payload) {
+	if (!payload?.todo) {
+		return;
+	}
+	mobileActionSheet = {
+		open: true,
+		todoId: payload.todo.id,
+		snapshot: payload.todo,
+		actions: payload.actions ?? {}
+	};
+}
+
+function closeMobileActionSheet() {
+	mobileActionSheet = { open: false, todoId: null, snapshot: null, actions: {} };
+}
+
+async function handleMobileSheetAction(actionKey) {
+	const todo = mobileActionTodo;
+	if (!todo) {
+		closeMobileActionSheet();
+		return;
+	}
+
+	const actions = mobileActionSheet.actions ?? {};
+	const handler = actions[actionKey];
+
+	try {
+		if (typeof handler === 'function') {
+			const result = handler();
+			if (result instanceof Promise) {
+				await result;
+			}
+		} else {
+			switch (actionKey) {
+				case 'markComplete':
+					await toggleTodo(todo.id, todo.completed);
+					break;
+				case 'deleteTodo':
+					await deleteTodo(todo.id);
+					break;
+				case 'toggleExpanded':
+					toggleExpanded(todo.id);
+					break;
+				default:
+					break;
+			}
+		}
+	} finally {
+		closeMobileActionSheet();
+	}
+}
+
+function registerTodoElement(id, element) {
+	if (!id || !element) return;
+	todoElementRegistry.set(id, element);
+}
+
+function unregisterTodoElement(id) {
+	if (!id) return;
+	todoElementRegistry.delete(id);
+}
+
+function cleanupMobileDragListeners() {
+	if (typeof window === 'undefined') {
+		return;
+	}
+	window.removeEventListener('pointermove', handleMobileDragMove);
+	window.removeEventListener('pointerup', handleMobileDragEnd);
+	window.removeEventListener('pointercancel', handleMobileDragEnd);
+}
+
+function startMobileDrag(payload, event) {
+	if (!payload?.todo || sortMode !== 'manual') {
+		return;
+	}
+	if (!hasCoarsePointer && !isMobile) {
+		return;
+	}
+	if (payload.level !== 0) {
+		return;
+	}
+
+	const index = filteredRootTodos.findIndex((item) => item.id === payload.todo.id);
+	if (index === -1) {
+		return;
+	}
+
+	event?.preventDefault?.();
+	event?.stopPropagation?.();
+
+	mobileDragState = {
+		active: true,
+		todoId: payload.todo.id,
+		pointerId: event?.pointerId ?? null,
+		startIndex: index,
+		currentIndex: index
+	};
+
+	draggedTodo = payload.todo;
+	dragOverTodo = payload.todo;
+
+	window.addEventListener('pointermove', handleMobileDragMove, { passive: false });
+	window.addEventListener('pointerup', handleMobileDragEnd);
+	window.addEventListener('pointercancel', handleMobileDragEnd);
+}
+
+function updateMobileDragTarget(clientY) {
+	if (!mobileDragState.active) {
+		return;
+	}
+
+	const list = filteredRootTodos;
+	if (!list.length) {
+		return;
+	}
+
+	let targetIndex = list.findIndex((item) => {
+		const element = todoElementRegistry.get(item.id);
+		if (!element) return false;
+		const rect = element.getBoundingClientRect();
+		return clientY >= rect.top && clientY <= rect.bottom;
+	});
+
+	if (targetIndex === -1) {
+		const firstElement = todoElementRegistry.get(list[0].id);
+		const lastElement = todoElementRegistry.get(list[list.length - 1].id);
+		if (firstElement) {
+			const firstRect = firstElement.getBoundingClientRect();
+			if (clientY < firstRect.top) {
+				targetIndex = 0;
+			}
+		}
+		if (targetIndex === -1 && lastElement) {
+			const lastRect = lastElement.getBoundingClientRect();
+			if (clientY > lastRect.bottom) {
+				targetIndex = list.length - 1;
+			}
+		}
+	}
+
+	if (targetIndex !== -1 && targetIndex !== mobileDragState.currentIndex) {
+		mobileDragState = {
+			...mobileDragState,
+			currentIndex: targetIndex
+		};
+		dragOverTodo = list[targetIndex];
+	}
+}
+
+function handleMobileDragMove(event) {
+	if (!mobileDragState.active) {
+		return;
+	}
+	if (mobileDragState.pointerId != null && event.pointerId !== mobileDragState.pointerId) {
+		return;
+	}
+	event.preventDefault();
+	updateMobileDragTarget(event.clientY);
+}
+
+async function handleMobileDragEnd(event) {
+	if (!mobileDragState.active) {
+		return;
+	}
+	if (mobileDragState.pointerId != null && event.pointerId !== mobileDragState.pointerId) {
+		return;
+	}
+
+	cleanupMobileDragListeners();
+
+	const { startIndex, currentIndex } = mobileDragState;
+	mobileDragState = {
+		active: false,
+		todoId: null,
+		pointerId: null,
+		startIndex: -1,
+		currentIndex: -1
+	};
+
+	const list = filteredRootTodos;
+	dragOverTodo = null;
+	draggedTodo = null;
+	dragOverTopZone = false;
+
+	if (startIndex === -1 || currentIndex === -1 || startIndex === currentIndex) {
+		return;
+	}
+
+	const newOrder = [...list];
+	const [moved] = newOrder.splice(startIndex, 1);
+	newOrder.splice(currentIndex, 0, moved);
+	await submitReorder(newOrder);
+}
+
+setContext('todo-actions', {
+	toggleTodoComplete: (id, completed) => toggleTodo(id, completed),
+	deleteTodo,
+	toggleExpanded,
+	isExpanded,
+	addSubtask,
+	priorityLabel: getPriorityLabel,
+	priorityClass: (value) => `priority-${resolvePriorityKey(value)}`,
+	updateTodoText,
+	updateTodoPriority,
+	updateTodoDueDate,
+	updateTodoNotes,
+	updateTodoAssignee,
+	uploadAttachment,
+	removeAttachment,
+	getListMembers: () => currentListMembers,
+	getEditingUser: (todoId) => todoEditingState.get(todoId),
+	getTypingUser: (todoId, field) => todoTypingState.get(`${todoId}:${field}`),
+	currentListId: () => currentList?.id
 });
 
 setContext('mobile-enhancements', {
-        isMobile: () => isMobile,
-        hasCoarsePointer: () => hasCoarsePointer
+	isMobile: () => isMobile,
+	hasCoarsePointer: () => hasCoarsePointer,
+	cameraCaptureSupported: () => cameraCaptureSupported,
+	isVoiceSupported: () => isVoiceSupported,
+	toggleVoiceInput
 });
 
 setContext('mobile-action-sheet', {
@@ -1489,18 +2418,53 @@ setContext('mobile-dnd', {
 
 	<div class="input-section">
 		<div class="input-with-tools">
-                        <input
-                                type="text"
-                                bind:value={newTodoText}
-                                bind:this={newTodoInputEl}
-                                onkeypress={handleKeyPress}
-                                placeholder="What needs to be done?"
-                                autocomplete="off"
-                                enterkeyhint="done"
-                        />
-                </div>
-                <button onclick={addTodo}>Add</button>
-        </div>
+			<input
+				type="text"
+				bind:value={newTodoText}
+				bind:this={newTodoInputEl}
+				onkeypress={handleKeyPress}
+				placeholder="What needs to be done?"
+				autocomplete="off"
+				enterkeyhint="done"
+			/>
+			{#if isVoiceSupported}
+				<button
+					type="button"
+					class="icon-btn voice-btn"
+					class:listening={isVoiceActive}
+					onclick={toggleVoiceInput}
+					title={isVoiceActive ? 'Stop voice input' : 'Capture with voice'}
+					aria-pressed={isVoiceActive}
+				>
+					{isVoiceActive ? '■' : '🎙️'}
+				</button>
+			{/if}
+			{#if cameraCaptureSupported}
+				<button
+					type="button"
+					class="icon-btn camera-btn"
+					onclick={() => cameraInputEl?.click()}
+					title="Capture photo"
+					aria-label="Capture photo for new task"
+				>
+					📷
+				</button>
+				<input
+					class="camera-input"
+					type="file"
+					accept="image/*"
+					capture="environment"
+					bind:this={cameraInputEl}
+					onchange={handleCameraCapture}
+				/>
+			{/if}
+		</div>
+		<button onclick={addTodo}>Add</button>
+	</div>
+
+	{#if voiceError}
+		<div class="voice-error" role="status">{voiceError}</div>
+	{/if}
 
 	<div class="task-options-row">
 		<label class="task-type-label">
@@ -1745,8 +2709,8 @@ setContext('mobile-dnd', {
 		onclick={() => showNewListModal = false}
 		onkeydown={(event) => handleOverlayKey(event, () => showNewListModal = false)}
 	>
-                <div
-                        class="modal"
+		<div
+			class="modal"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="new-list-title"
@@ -1778,8 +2742,8 @@ setContext('mobile-dnd', {
 		onclick={() => showInviteModal = false}
 		onkeydown={(event) => handleOverlayKey(event, () => showInviteModal = false)}
 	>
-                <div
-                        class="modal settings-modal"
+		<div
+			class="modal"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="invite-title"
@@ -1959,7 +2923,7 @@ setContext('mobile-dnd', {
 		onkeydown={(event) => handleOverlayKey(event, () => showSettingsModal = false)}
 	>
 		<div
-			class="modal settings-modal"
+			class="modal"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="settings-title"
@@ -2310,10 +3274,10 @@ setContext('mobile-dnd', {
 		background: #ff5252;
 	}
 
-        @media (max-width: 1024px) {
-                .app-container {
-                        flex-direction: column;
-                }
+	@media (max-width: 1024px) {
+		.app-container {
+			flex-direction: column;
+		}
 
 		.sidebar-header-actions .icon-btn {
 			width: 36px;
@@ -2329,37 +3293,27 @@ setContext('mobile-dnd', {
 			padding: 1.25rem 1rem 3rem;
 		}
 
-                .header {
-                        flex-direction: row;
-                        align-items: center;
-                        justify-content: space-between;
-                        flex-wrap: wrap;
-                        gap: 0.75rem;
-                }
+		.header {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 1rem;
+		}
 
-                .header-left {
-                        flex: 1 1 auto;
-                        min-width: 0;
-                }
+		.header-left {
+			width: 100%;
+		}
 
-                .header-actions {
-                        flex: 0 0 auto;
-                        width: auto;
-                        justify-content: flex-end;
-                        gap: 0.5rem;
-                }
+		.header-actions {
+			width: 100%;
+			justify-content: flex-start;
+			gap: 0.75rem;
+		}
 
-                .user-info {
-                        flex-direction: column;
-                        align-items: flex-start;
-                        gap: 0.5rem;
-                        text-align: left;
-                }
-
-                .welcome {
-                        display: block;
-                        text-align: left;
-                }
+		.user-info {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.5rem;
+		}
 
 		.list-actions {
 			flex-wrap: wrap;
@@ -2958,10 +3912,32 @@ setContext('mobile-dnd', {
 		background-color: var(--color-accent-hover, #45a049);
 	}
 
-        .task-options-row {
-                display: flex;
-                gap: 1rem;
-                margin-bottom: 1rem;
+	.camera-input {
+		display: none;
+	}
+
+	.voice-btn,
+	.camera-btn {
+		width: 40px;
+		height: 40px;
+		font-size: 1.2rem;
+		background: var(--color-primary, #667eea);
+	}
+
+	.voice-btn.listening {
+		background: #ef4444;
+	}
+
+	.voice-error {
+		margin-bottom: 0.75rem;
+		color: #ef4444;
+		font-size: 0.9rem;
+	}
+
+	.task-options-row {
+		display: flex;
+		gap: 1rem;
+		margin-bottom: 1rem;
 		padding: 0.5rem;
 		background-color: #f8f9fa;
 		border-radius: 4px;
@@ -3539,14 +4515,10 @@ setContext('mobile-dnd', {
 		background-color: #c82333;
 	}
 
-        /* Settings Modal Styles */
-        .settings-modal {
-                max-width: 560px;
-        }
-
-        .settings-section {
-                margin-bottom: 1.5rem;
-        }
+	/* Settings Modal Styles */
+	.settings-section {
+		margin-bottom: 1.5rem;
+	}
 
 	.settings-section h3 {
 		margin: 0 0 1rem 0;
@@ -3778,8 +4750,12 @@ setContext('mobile-dnd', {
 		color: #e2e8f0;
 	}
 
-        :global(body.dark-mode) .task-options-row,
-        :global(body.dark-mode) .recurring-options,
+	:global(body.dark-mode) .voice-error {
+		color: #fca5a5;
+	}
+
+	:global(body.dark-mode) .task-options-row,
+	:global(body.dark-mode) .recurring-options,
 	:global(body.dark-mode) .due-date-options {
 		background-color: #252538;
 	}
@@ -4364,65 +5340,32 @@ setContext('mobile-dnd', {
                 }
 
                 /* Settings modal adjustments */
-                .settings-modal {
-                        width: calc(100vw - 2.5rem);
-                        max-width: 480px;
-                        margin: 0 auto;
-                        padding: 1.5rem 1.25rem 2rem;
-                        border-radius: 18px;
-                        display: flex;
-                        flex-direction: column;
-                        gap: 1.25rem;
-                        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.25);
+                .modal {
+                        width: calc(100vw - 2rem);
+                        min-width: 0;
+                        padding: 1.5rem;
+                        margin: 0 1rem;
                 }
 
-                .settings-modal .settings-section {
-                        flex: 1 1 auto;
-                        display: flex;
-                        flex-direction: column;
-                        gap: 1rem;
-                        margin-bottom: 0;
+                .settings-section {
+                        margin-bottom: 1.25rem;
                 }
 
-                .settings-modal .setting-item {
+                .setting-item {
                         flex-direction: column;
                         align-items: stretch;
                         gap: 0.75rem;
-                        padding: 1rem;
-                        border-radius: 14px;
-                        background: rgba(248, 249, 250, 0.96);
-                        border: 1px solid rgba(148, 163, 184, 0.35);
                 }
 
-                .settings-modal .setting-item label {
+                .setting-item label {
                         width: 100%;
                         min-width: 0;
                 }
 
-                .settings-modal .setting-select,
-                .settings-modal .setting-toggle-btn {
+                .setting-select,
+                .setting-toggle-btn {
                         width: 100%;
                         min-width: 0;
-                }
-
-                .settings-modal .modal-actions {
-                        position: static;
-                        padding: 0;
-                        margin: 0;
-                }
-
-                .settings-modal .modal-actions .btn-primary {
-                        width: 100%;
-                }
-
-                :global(body.dark-mode) .settings-modal {
-                        background: rgba(23, 27, 45, 0.95);
-                        box-shadow: 0 18px 40px rgba(2, 6, 23, 0.45);
-                }
-
-                :global(body.dark-mode) .settings-modal .setting-item {
-                        background: rgba(37, 41, 66, 0.9);
-                        border-color: rgba(99, 102, 241, 0.35);
                 }
 
                 .input-section {
