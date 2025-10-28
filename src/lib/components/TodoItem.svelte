@@ -5,17 +5,19 @@
 	import TodoItemComponent from './TodoItem.svelte';
 	import { emitEditing, emitStoppedEditing, emitTyping, emitStoppedTyping } from '$lib/stores/websocket.js';
 
-	let {
-		todo,
-		level = 0,
-		currentUserId,
-		onDragStart = null,
-		onDragOver = null,
-		onDrop = null,
-		onDragEnd = null,
-		isDragging = false,
-		isDragOver = false
-	} = $props();
+let {
+	todo,
+	level = 0,
+	currentUserId,
+	onDragStart = null,
+	onDragOver = null,
+	onDrop = null,
+	onDragEnd = null,
+	isDragging = false,
+	isDragOver = false,
+	dragIntentTargetId = null,
+	dragIntentType = 'none'
+} = $props();
 
 	const {
 		toggleTodoComplete,
@@ -38,7 +40,6 @@
 const mobileEnhancements = getContext('mobile-enhancements') ?? {};
 const mobileActionSheet = getContext('mobile-action-sheet') ?? null;
 const domRegistry = getContext('todo-dom-registry') ?? null;
-const mobileDnd = getContext('mobile-dnd') ?? null;
 
 	const isMobileDevice = mobileEnhancements?.isMobile?.() ?? false;
 	const hasTouchInput = mobileEnhancements?.hasCoarsePointer?.() ?? false;
@@ -66,6 +67,18 @@ let renderedNotes = $derived(todo.notes ? marked.parse(todo.notes || '') : '');
 
 let hasNotes = $derived.by(() => typeof todo.notes === 'string' && todo.notes.trim().length > 0);
 let attachmentCount = $derived((todo.attachments ?? []).length);
+
+// Comments state
+let comments = $state([]);
+let newCommentText = $state('');
+let isLoadingComments = $state(false);
+let isSharedList = $derived.by(() => {
+	if (typeof getListMembers !== 'function') {
+		return false;
+	}
+	const members = getListMembers() ?? [];
+	return members.length > 1;
+});
 let isEditingAssignee = $state(false);
 let assigneeDraft = $state(todo.assigned_to ? String(todo.assigned_to) : '');
 
@@ -86,6 +99,8 @@ let assigneeLabel = $derived.by(() => {
 	const match = assignmentOptions.find((member) => member.id === todo.assigned_to);
 	return match ? match.username : (todo.assigned_to_username ?? 'Unassigned');
 });
+
+const isActiveDragTarget = $derived(dragIntentTargetId === todo.id);
 
 // Presence tracking
 let editingUser = $derived.by(() => {
@@ -172,7 +187,9 @@ function handleTouchStart(event) {
 	}
 
 	const touch = event.touches?.[0];
-	if (!touch) return;
+	if (!touch) {
+		return;
+	}
 
 	swipeStartX = touch.clientX;
 	swipeStartY = touch.clientY;
@@ -200,15 +217,16 @@ function handleTouchMove(event) {
 	const deltaX = touch.clientX - swipeStartX;
 	const deltaY = touch.clientY - swipeStartY;
 
+	// Only start swiping if horizontal movement exceeds threshold and is more horizontal than vertical
 	if (!isSwiping) {
-		if (Math.abs(deltaX) < 12 || Math.abs(deltaX) < Math.abs(deltaY)) {
+		if (Math.abs(deltaX) < 30 || Math.abs(deltaX) < Math.abs(deltaY)) {
 			return;
 		}
 		isSwiping = true;
+		clearLongPressTimer(); // Clear long press when swipe starts
 	}
 
 	if (isSwiping) {
-		clearLongPressTimer();
 		event.preventDefault();
 		event.stopPropagation();
 		const limited = Math.max(Math.min(deltaX, 140), -140);
@@ -250,16 +268,6 @@ async function handleTouchEnd() {
 	longPressTriggered = false;
 }
 
-function handleDragHandlePointerDown(event) {
-	if (!mobileDnd?.startDrag) {
-		return;
-	}
-	event.preventDefault();
-	event.stopPropagation();
-	clearLongPressTimer();
-	mobileDnd.startDrag({ todo, level }, event);
-}
-
 onMount(() => {
 	domRegistry?.registerElement?.(todo.id, hostElement);
 	if (swipeContentEl) {
@@ -288,6 +296,13 @@ onDestroy(() => {
 				}, 1000);
 			}
 			previousCompletedState = todo.completed;
+		}
+	});
+
+	// Load comments when notes section is expanded
+	$effect(() => {
+		if (notesExpanded && isSharedList) {
+			loadComments();
 		}
 	});
 
@@ -551,6 +566,81 @@ function handleNotesKeyDown(event) {
 	}
 }
 
+// Comment functions
+async function loadComments() {
+	if (!isSharedList) return;
+
+	isLoadingComments = true;
+	try {
+		const response = await fetch(`/api/comments?todoId=${todo.id}`);
+		const data = await response.json();
+		if (data.comments) {
+			comments = data.comments;
+		}
+	} catch (error) {
+		console.error('Error loading comments:', error);
+	} finally {
+		isLoadingComments = false;
+	}
+}
+
+async function addComment() {
+	if (!newCommentText.trim() || !isSharedList) return;
+
+	try {
+		const response = await fetch('/api/comments', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				todoId: todo.id,
+				commentText: newCommentText.trim()
+			})
+		});
+
+		const data = await response.json();
+		if (data.comment) {
+			comments = [...comments, data.comment];
+			newCommentText = '';
+		}
+	} catch (error) {
+		console.error('Error adding comment:', error);
+	}
+}
+
+async function deleteComment(commentId) {
+	if (!isSharedList) return;
+
+	try {
+		await fetch(`/api/comments/${commentId}`, {
+			method: 'DELETE'
+		});
+
+		comments = comments.filter(c => c.id !== commentId);
+	} catch (error) {
+		console.error('Error deleting comment:', error);
+	}
+}
+
+function formatCommentTime(timestamp) {
+	const date = new Date(timestamp);
+	const now = new Date();
+	const diffMs = now - date;
+	const diffMins = Math.floor(diffMs / 60000);
+	const diffHours = Math.floor(diffMs / 3600000);
+	const diffDays = Math.floor(diffMs / 86400000);
+
+	if (diffMins < 1) return 'just now';
+	if (diffMins < 60) return `${diffMins}m ago`;
+	if (diffHours < 24) return `${diffHours}h ago`;
+	if (diffDays < 7) return `${diffDays}d ago`;
+	return date.toLocaleDateString();
+}
+
+function processCommentMentions(text) {
+	// Replace @username with highlighted mentions
+	return text.replace(/@(\w+)/g, '<span class="mention">@$1</span>');
+}
+
 function startEditingAssignee() {
 	isEditingAssignee = true;
 	assigneeDraft = todo.assigned_to ? String(todo.assigned_to) : '';
@@ -590,11 +680,13 @@ function handleAssigneeKeyDown(event) {
 	class:completing={isCompletionAnimating}
 	class:dragging={isDragging}
 	class:drag-over={isDragOver}
+	class:drag-intent-indent={isActiveDragTarget && dragIntentType === 'indent'}
+	class:drag-intent-outdent={isActiveDragTarget && dragIntentType === 'outdent'}
 	class:swipe-right={swipeOffset > 16}
 	class:swipe-left={swipeOffset < -16}
 	bind:this={hostElement}
 	draggable={onDragStart !== null && !(isMobileDevice && hasTouchInput)}
-	ondragstart={onDragStart ? () => onDragStart(todo) : null}
+	ondragstart={onDragStart ? (e) => onDragStart(e, todo) : null}
 	ondragover={onDragOver ? (e) => onDragOver(e, todo) : null}
 	ondrop={onDrop ? (e) => onDrop(e, todo) : null}
 	ondragend={onDragEnd ? () => onDragEnd() : null}
@@ -626,19 +718,7 @@ function handleAssigneeKeyDown(event) {
 			<span class="conflict-badge">⚠️ Conflict detected</span>
 		</div>
 	{/if}
-	<div class="todo-row" class:has-mobile-handle={(hasTouchInput || isMobileDevice) && level === 0}>
-		{#if (hasTouchInput || isMobileDevice) && level === 0}
-			<div class="drag-handle-cell">
-				<button
-					type="button"
-					class="drag-handle-btn"
-					onpointerdown={handleDragHandlePointerDown}
-					aria-label="Reorder task"
-				>
-					☰
-				</button>
-			</div>
-		{/if}
+	<div class="todo-row">
 		<div class="checkbox-cell">
 			<input
 				type="checkbox"
@@ -722,15 +802,15 @@ function handleAssigneeKeyDown(event) {
 						onchange={handleDueDateChange}
 						onblur={() => isEditingDueDate = false}
 					/>
-				{:else if todo.due_date}
-					<button
-						type="button"
-						class={`meta-chip meta-chip--due ${todo.overdue ? 'meta-chip--overdue' : ''}`}
-						onclick={() => isEditingDueDate = true}
-						onkeydown={(event) => handleActivationKey(event, () => { isEditingDueDate = true; })}
-						title="Tap to adjust due date"
-					>
-						⏰ {todo.due_date_label ?? ''}
+					{:else if todo.due_date}
+						<button
+							type="button"
+							class={`meta-chip meta-chip--due ${todo.overdue ? 'meta-chip--overdue' : ''}`}
+							onclick={() => isEditingDueDate = true}
+							onkeydown={(event) => handleActivationKey(event, () => { isEditingDueDate = true; })}
+							title="Tap to adjust due date"
+						>
+							⏰ {todo.due_date_label ?? ''}
 					</button>
 				{:else}
 					<button
@@ -868,6 +948,67 @@ function handleAssigneeKeyDown(event) {
 	</div>
 
 		<TodoAttachments todoId={todo.id} attachments={todo.attachments ?? []} />
+
+		<!-- Comments Section (only for shared lists) -->
+		{#if isSharedList}
+			<div class="comments-section">
+				<div class="comments-header">
+					<span class="comments-title">💬 Comments</span>
+					{#if comments.length > 0}
+						<span class="comments-count">{comments.length}</span>
+					{/if}
+				</div>
+
+				{#if isLoadingComments}
+					<div class="comments-loading">Loading comments...</div>
+				{:else}
+					<div class="comments-list">
+						{#each comments as comment (comment.id)}
+							<div class="comment-item">
+								<div class="comment-header">
+									<span class="comment-author">{comment.username}</span>
+									<span class="comment-time">{formatCommentTime(comment.created_at)}</span>
+									{#if comment.user_id === currentUserId}
+										<button
+											class="comment-delete-btn"
+											onclick={() => deleteComment(comment.id)}
+											title="Delete comment"
+										>
+											×
+										</button>
+									{/if}
+								</div>
+								<div class="comment-text">
+									{@html processCommentMentions(comment.comment_text)}
+								</div>
+							</div>
+						{/each}
+					</div>
+
+					<div class="comment-input-section">
+						<textarea
+							class="comment-input"
+							bind:value={newCommentText}
+							placeholder="Add a comment... Use @username to mention"
+							rows="2"
+							onkeydown={(e) => {
+								if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+									e.preventDefault();
+									addComment();
+								}
+							}}
+						></textarea>
+						<button
+							class="comment-submit-btn"
+							onclick={addComment}
+							disabled={!newCommentText.trim()}
+						>
+							Comment
+						</button>
+					</div>
+				{/if}
+			</div>
+		{/if}
 	{/if}
 
 	{#if canHaveSubtasks && hasChildren}
@@ -884,20 +1025,22 @@ function handleAssigneeKeyDown(event) {
 	{#if canHaveSubtasks && hasChildren && isExpanded(todo.id)}
 		<ul class="child-list">
 			{#each childTodos as subtask (subtask.id)}
-				<TodoItemComponent
-					todo={subtask}
-					level={level + 1}
-					{currentUserId}
-					{onDragStart}
-					{onDragOver}
-					{onDrop}
-					{onDragEnd}
-					isDragging={false}
-					isDragOver={false}
-				/>
-			{/each}
-		</ul>
-	{/if}
+					<TodoItemComponent
+						todo={subtask}
+						level={level + 1}
+						{currentUserId}
+						{onDragStart}
+						{onDragOver}
+						{onDrop}
+						{onDragEnd}
+						isDragging={false}
+						isDragOver={false}
+						dragIntentTargetId={dragIntentTargetId}
+						dragIntentType={dragIntentType}
+					/>
+				{/each}
+			</ul>
+		{/if}
 
 	{#if canHaveSubtasks}
 		<div class="subtask-input" class:hidden={!isExpanded(todo.id) && hasChildren}>
@@ -941,12 +1084,26 @@ function handleAssigneeKeyDown(event) {
 		overflow: hidden;
 		transition: border-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease, transform 0.2s ease;
 		position: relative;
+	}
+
+	.todo-item[draggable="true"] {
 		cursor: grab;
 	}
 
 	.todo-item.subtask-card {
 		background: linear-gradient(135deg, #f5f7ff 0%, #fbfcff 100%);
 		border-color: rgba(102, 126, 234, 0.25);
+	}
+
+
+	.todo-item.drag-intent-indent {
+		box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.3);
+		border-color: rgba(102, 126, 234, 0.6);
+	}
+
+	.todo-item.drag-intent-outdent {
+		box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.25);
+		border-color: rgba(16, 185, 129, 0.6);
 	}
 
 	.swipe-content {
@@ -1158,31 +1315,6 @@ function handleAssigneeKeyDown(event) {
 		font-size: var(--todo-item-font-size, 1rem);
 	}
 
-	.todo-row.has-mobile-handle {
-		grid-template-columns: 32px 26px 26px minmax(0, 1fr) auto;
-	}
-
-	.drag-handle-cell {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.drag-handle-btn {
-		border: none;
-		background: transparent;
-		font-size: 1.2rem;
-		line-height: 1;
-		cursor: grab;
-		color: #9aa0c2;
-		padding: 0;
-	}
-
-	.drag-handle-btn:active {
-		cursor: grabbing;
-		color: #5568d3;
-	}
-
 	.todo-row input[type='checkbox'] {
 		width: 18px;
 		height: 18px;
@@ -1207,14 +1339,6 @@ function handleAssigneeKeyDown(event) {
 			align-items: flex-start;
 			gap: 0.3rem;
 			flex-wrap: nowrap;
-		}
-
-		.todo-row.has-mobile-handle {
-			display: flex;
-		}
-
-		.drag-handle-cell {
-			display: none;
 		}
 
 		/* Hide metadata on mobile */
@@ -1934,21 +2058,32 @@ function handleAssigneeKeyDown(event) {
 
 	.progress-bar {
 		flex: 1;
-		height: 6px;
-		background: #e8eaf6;
+		height: 8px;
+		background: linear-gradient(135deg, rgba(102, 126, 234, 0.15), rgba(129, 140, 248, 0.15));
 		border-radius: 999px;
 		overflow: hidden;
+		position: relative;
+	}
+
+	.progress-bar::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		box-shadow: inset 0 2px 4px rgba(76, 87, 125, 0.12);
 	}
 
 	.progress-bar-fill {
 		height: 100%;
-		background: #667eea;
-		transition: width 0.2s ease;
+		background: linear-gradient(90deg, #667eea 0%, #8b5cf6 50%, #06b6d4 100%);
+		transition: width 0.25s ease;
 	}
 
 	.subtask-progress-label {
 		font-size: 0.8rem;
 		color: #566089;
+		white-space: nowrap;
+		font-weight: 600;
 	}
 
 	.child-list {
@@ -2009,16 +2144,16 @@ function handleAssigneeKeyDown(event) {
 	}
 
 	/* Dark Mode Styles */
-	:global(body.dark-mode) .todo-item {
-		background: #252538;
-		border-color: #353549;
-		box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
-	}
+:global(body.dark-mode) .todo-item {
+	background: #252538;
+	border-color: #353549;
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
 
-	:global(body.dark-mode) .todo-item.being-edited {
-		border-color: #ffa726;
-		box-shadow: 0 0 0 2px rgba(255, 167, 38, 0.3);
-	}
+		:global(body.dark-mode) .todo-item.being-edited {
+			border-color: #ffa726;
+			box-shadow: 0 0 0 2px rgba(255, 167, 38, 0.3);
+		}
 
 	@keyframes complete-celebration-dark {
 		0% {
@@ -2123,16 +2258,16 @@ function handleAssigneeKeyDown(event) {
 		color: #cbd5ff;
 	}
 
-	:global(body.dark-mode) .meta-chip--due {
-		background: rgba(59, 130, 246, 0.2);
-		border-color: rgba(147, 197, 253, 0.4);
-		color: #bfdbfe;
-	}
+:global(body.dark-mode) .meta-chip--due {
+	background: rgba(59, 130, 246, 0.2);
+	border-color: rgba(147, 197, 253, 0.4);
+	color: #bfdbfe;
+}
 
-	:global(body.dark-mode) .meta-chip--overdue {
-		background: rgba(248, 113, 113, 0.22);
-		border-color: rgba(252, 165, 165, 0.4);
-		color: #fecaca;
+:global(body.dark-mode) .meta-chip--overdue {
+	background: rgba(248, 113, 113, 0.22);
+	border-color: rgba(252, 165, 165, 0.4);
+	color: #fecaca;
 	}
 
 	:global(body.dark-mode) .meta-chip--recurring {
@@ -2166,13 +2301,17 @@ function handleAssigneeKeyDown(event) {
 		color: #b5b9d4;
 	}
 
-	:global(body.dark-mode) .progress-bar {
-		background: #353549;
-	}
+:global(body.dark-mode) .progress-bar {
+	background: linear-gradient(135deg, rgba(99, 102, 241, 0.22), rgba(129, 140, 248, 0.2));
+}
 
-	:global(body.dark-mode) .progress-bar-fill {
-		background: #8b95e8;
-	}
+:global(body.dark-mode) .progress-bar::after {
+	box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+:global(body.dark-mode) .progress-bar-fill {
+	background: linear-gradient(90deg, #8b95e8 0%, #6366f1 45%, #22d3ee 100%);
+}
 
 	:global(body.dark-mode) .subtask-progress-label {
 		color: #9a9eb8;
@@ -2331,5 +2470,196 @@ function handleAssigneeKeyDown(event) {
 	:global(body.dark-mode) .markdown-content :global(blockquote) {
 		border-left-color: #8b95e8;
 		color: #b5b9d4;
+	}
+
+	/* Comments Section */
+	.comments-section {
+		margin-top: 1rem;
+		padding: 1rem;
+		background: #f9f9fb;
+		border-radius: 8px;
+		border: 1px solid #e0e0e0;
+	}
+
+	.comments-header {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-bottom: 0.75rem;
+		font-weight: 600;
+		color: #333;
+	}
+
+	.comments-title {
+		font-size: 0.95rem;
+	}
+
+	.comments-count {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 1.25rem;
+		height: 1.25rem;
+		padding: 0 0.35rem;
+		background: var(--color-primary, #667eea);
+		color: white;
+		border-radius: 10px;
+		font-size: 0.75rem;
+		font-weight: 600;
+	}
+
+	.comments-loading {
+		padding: 1rem;
+		text-align: center;
+		color: #666;
+		font-size: 0.9rem;
+	}
+
+	.comments-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		margin-bottom: 1rem;
+		max-height: 400px;
+		overflow-y: auto;
+	}
+
+	.comment-item {
+		padding: 0.75rem;
+		background: white;
+		border-radius: 6px;
+		border: 1px solid #e8e8e8;
+	}
+
+	.comment-header {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-bottom: 0.5rem;
+	}
+
+	.comment-author {
+		font-weight: 600;
+		color: var(--color-primary, #667eea);
+		font-size: 0.9rem;
+	}
+
+	.comment-time {
+		font-size: 0.8rem;
+		color: #999;
+	}
+
+	.comment-delete-btn {
+		margin-left: auto;
+		background: transparent;
+		border: none;
+		color: #999;
+		font-size: 1.2rem;
+		cursor: pointer;
+		padding: 0 0.25rem;
+		line-height: 1;
+		transition: color 0.2s;
+	}
+
+	.comment-delete-btn:hover {
+		color: #e74c3c;
+	}
+
+	.comment-text {
+		font-size: 0.9rem;
+		line-height: 1.5;
+		color: #333;
+		word-wrap: break-word;
+	}
+
+	.comment-text :global(.mention) {
+		color: var(--color-primary, #667eea);
+		font-weight: 600;
+		background: rgba(102, 126, 234, 0.1);
+		padding: 0.1rem 0.3rem;
+		border-radius: 3px;
+	}
+
+	.comment-input-section {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	.comment-input {
+		width: 100%;
+		padding: 0.5rem;
+		border: 1px solid #ddd;
+		border-radius: 4px;
+		font-family: inherit;
+		font-size: 0.9rem;
+		resize: vertical;
+		min-height: 60px;
+	}
+
+	.comment-input:focus {
+		outline: none;
+		border-color: var(--color-primary, #667eea);
+		box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+	}
+
+	.comment-submit-btn {
+		align-self: flex-end;
+		padding: 0.5rem 1rem;
+		background: var(--color-primary, #667eea);
+		color: white;
+		border: none;
+		border-radius: 4px;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 0.2s;
+	}
+
+	.comment-submit-btn:hover:not(:disabled) {
+		background: var(--color-primary-hover, #5568d3);
+	}
+
+	.comment-submit-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	/* Dark mode styles for comments */
+	:global(body.dark-mode) .comments-section {
+		background: #1e1e2e;
+		border-color: #2a2a3e;
+	}
+
+	:global(body.dark-mode) .comments-header {
+		color: #e0e0e0;
+	}
+
+	:global(body.dark-mode) .comment-item {
+		background: #252538;
+		border-color: #2a2a3e;
+	}
+
+	:global(body.dark-mode) .comment-text {
+		color: #d0d0d0;
+	}
+
+	:global(body.dark-mode) .comment-input {
+		background: #252538;
+		border-color: #3a3a4e;
+		color: #e0e0e0;
+	}
+
+	:global(body.dark-mode) .comment-input:focus {
+		border-color: var(--color-primary, #667eea);
+	}
+
+	/* Mobile responsive styles */
+	@media (max-width: 768px) {
+		.todo-title {
+			white-space: normal;
+			overflow: visible;
+			text-overflow: unset;
+			word-break: break-word;
+		}
 	}
 </style>

@@ -7,7 +7,9 @@
 		isOpen = false,
 		todo = null,
 		showNotesToggle = false,
-		showEditAction = false
+		showEditAction = false,
+		canMoveUp = false,
+		canMoveDown = false
 	} = $props();
 
 	const close = () => dispatch('close');
@@ -101,6 +103,28 @@
 					<span class="icon">🧭</span>
 					<span>Toggle subtasks</span>
 				</button>
+
+				{#if canMoveUp}
+					<button
+						type="button"
+						class="sheet-action"
+						onclick={() => emit('move-up')}
+					>
+						<span class="icon">⬆️</span>
+						<span>Move up</span>
+					</button>
+				{/if}
+
+				{#if canMoveDown}
+					<button
+						type="button"
+						class="sheet-action"
+						onclick={() => emit('move-down')}
+					>
+						<span class="icon">⬇️</span>
+						<span>Move down</span>
+					</button>
+				{/if}
 
 				{#if showNotesToggle}
 					<button

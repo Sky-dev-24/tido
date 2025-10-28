@@ -3110,11 +3110,13 @@ setContext('mobile-dnd', {
 				<div class="mobile-secondary-actions">
 					<button type="button" class="export-btn-mobile" onclick={() => showExportModal = true}>Export</button>
 					<button type="button" class="import-btn-mobile" onclick={() => showImportModal = true}>Import</button>
+				</div>
 				{#if currentList.permission_level === 'admin' && !(currentList.name === 'My Tasks' && currentList.member_count === 1)}
+					<div class="mobile-secondary-actions">
 						<button type="button" class="invite-btn-mobile" onclick={() => showInviteModal = true}>Invite</button>
 						<button type="button" class="archive-list-btn" onclick={archiveCurrentList}>Archive</button>
+					</div>
 				{/if}
-			</div>
 			</section>
 		{:else}
 			<div class="list-header">
@@ -4624,6 +4626,12 @@ setContext('mobile-dnd', {
 			font-size: 2.2rem;
 		}
 
+		.list-header {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.75rem;
+		}
+
 		.list-header h1 {
 			font-size: 2.15rem;
 		}
@@ -4680,9 +4688,8 @@ setContext('mobile-dnd', {
 
 	.list-header {
 		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 1rem;
+		justify-content: space-between;
+		align-items: center;
 		margin-bottom: 1.5rem;
 	}
 
@@ -4690,7 +4697,6 @@ setContext('mobile-dnd', {
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-		flex-wrap: wrap;
 	}
 
 	.list-header h1 {
@@ -4716,59 +4722,61 @@ setContext('mobile-dnd', {
 	}
 
 	.export-btn,
-	.import-btn,
-	.invite-btn,
-	.archive-list-btn {
+	.import-btn {
 		padding: 0.5rem 1rem;
-		border: 2px solid transparent;
+		border: none;
 		border-radius: 4px;
 		font-weight: 500;
 		cursor: pointer;
-		transition: all 0.2s;
+		transition: background 0.2s;
 	}
 
 	.export-btn {
-		background: #f0f0f0;
-		color: #27ae60;
-		border-color: #27ae60;
-	}
-
-	.export-btn:hover {
 		background: #27ae60;
 		color: white;
 	}
 
-	.import-btn {
-		background: #f0f0f0;
-		color: #3498db;
-		border-color: #3498db;
+	.export-btn:hover {
+		background: #229954;
 	}
 
-	.import-btn:hover {
+	.import-btn {
 		background: #3498db;
 		color: white;
 	}
 
+	.import-btn:hover {
+		background: #2980b9;
+	}
+
 	.invite-btn {
+		padding: 0.5rem 1rem;
 		background: var(--color-primary, #667eea);
 		color: white;
-		border-color: var(--color-primary, #667eea);
+		border: none;
+		border-radius: 4px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: background 0.2s;
 	}
 
 	.invite-btn:hover {
-		background: transparent;
-		color: var(--color-primary, #667eea);
+		background: var(--color-primary-hover, #5568d3);
 	}
 
 	.archive-list-btn {
-		background: #f0f0f0;
-		color: #e67e22;
-		border-color: #e67e22;
+		padding: 0.5rem 1rem;
+		background: #f39c12;
+		color: white;
+		border: none;
+		border-radius: 4px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: background 0.2s;
 	}
 
 	.archive-list-btn:hover {
 		background: #e67e22;
-		color: white;
 	}
 
 	.archived-lists-btn {
@@ -5129,23 +5137,23 @@ setContext('mobile-dnd', {
 	}
 
 	.mobile-secondary-actions .invite-btn-mobile {
-		border: 2px solid var(--color-primary, #667eea);
-		background: var(--color-primary, #667eea);
+		border: 1px solid rgba(148, 163, 184, 0.45);
+		background: rgba(243, 244, 246, 0.72);
 		border-radius: 999px;
 		padding: 0.45rem 1rem;
 		font-size: 0.85rem;
 		font-weight: 600;
-		color: white;
+		color: #374151;
 	}
 
 	.mobile-secondary-actions .archive-list-btn {
-		border: 2px solid #e67e22;
+		border: none;
 		border-radius: 999px;
 		padding: 0.45rem 1rem;
 		font-size: 0.85rem;
 		font-weight: 600;
-		background: rgba(243, 244, 246, 0.72);
-		color: #e67e22;
+		background: #f39c12;
+		color: white;
 	}
 
 	.mobile-export-import {
@@ -5153,23 +5161,23 @@ setContext('mobile-dnd', {
 	}
 
 	.mobile-secondary-actions .export-btn-mobile {
-		border: 2px solid #27ae60;
+		border: none;
 		border-radius: 999px;
 		padding: 0.45rem 1rem;
 		font-size: 0.85rem;
 		font-weight: 600;
-		background: rgba(243, 244, 246, 0.72);
-		color: #27ae60;
+		background: #27ae60;
+		color: white;
 	}
 
 	.mobile-secondary-actions .import-btn-mobile {
-		border: 2px solid #3498db;
+		border: none;
 		border-radius: 999px;
 		padding: 0.45rem 1rem;
 		font-size: 0.85rem;
 		font-weight: 600;
-		background: rgba(243, 244, 246, 0.72);
-		color: #3498db;
+		background: #3498db;
+		color: white;
 	}
 
 	.input-with-tools {
@@ -6394,16 +6402,10 @@ setContext('mobile-dnd', {
 		background: linear-gradient(135deg, #4c51bf 0%, #6366f1 100%);
 	}
 
-	:global(body.dark-mode) .mobile-secondary-actions .export-btn-mobile,
-	:global(body.dark-mode) .mobile-secondary-actions .import-btn-mobile,
-	:global(body.dark-mode) .mobile-secondary-actions .archive-list-btn {
-		background: rgba(37, 37, 56, 0.8);
-	}
-
 	:global(body.dark-mode) .mobile-secondary-actions .invite-btn-mobile {
-		background: var(--color-primary, #667eea);
-		border-color: var(--color-primary, #667eea);
-		color: white;
+		background: rgba(55, 65, 81, 0.7);
+		border-color: rgba(148, 163, 184, 0.3);
+		color: #e5e7eb;
 	}
 
 	:global(body.dark-mode) .mobile-list-select label {
@@ -6480,37 +6482,6 @@ setContext('mobile-dnd', {
 	:global(body.dark-mode) .calendar-btn:hover,
 	:global(body.dark-mode) .recently-deleted-btn:hover {
 		background: #353549;
-	}
-
-	:global(body.dark-mode) .export-btn,
-	:global(body.dark-mode) .import-btn,
-	:global(body.dark-mode) .archive-list-btn {
-		background: #252538;
-	}
-
-	:global(body.dark-mode) .export-btn:hover {
-		background: #27ae60;
-		color: white;
-	}
-
-	:global(body.dark-mode) .import-btn:hover {
-		background: #3498db;
-		color: white;
-	}
-
-	:global(body.dark-mode) .invite-btn {
-		background: var(--color-primary, #667eea);
-		color: white;
-	}
-
-	:global(body.dark-mode) .invite-btn:hover {
-		background: #252538;
-		color: var(--color-primary, #667eea);
-	}
-
-	:global(body.dark-mode) .archive-list-btn:hover {
-		background: #e67e22;
-		color: white;
 	}
 
 	:global(body.dark-mode) .footer {

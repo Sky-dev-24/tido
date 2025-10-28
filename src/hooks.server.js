@@ -27,7 +27,16 @@ export async function handle({ event, resolve }) {
         username: session.username,
         email: session.email,
         is_admin: Boolean(session.is_admin),
-        dark_mode: session.dark_mode || 0
+        dark_mode: session.dark_mode || 0,
+        theme: session.theme,
+        view_density: session.view_density,
+        font_scale: session.font_scale,
+        font_family: session.font_family,
+        default_task_priority: session.default_task_priority,
+        default_task_due_offset_days: session.default_task_due_offset_days,
+        default_task_reminder_minutes: session.default_task_reminder_minutes,
+        auto_archive_days: session.auto_archive_days,
+        week_start_day: session.week_start_day
       };
     } else {
       // Session expired, invalid, or user not approved - clear cookie

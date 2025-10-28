@@ -106,6 +106,22 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_task_attachments_todo ON task_attachments(todo_id);
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS todo_comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    todo_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    comment_text TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_todo_comments_todo ON todo_comments(todo_id);
+  CREATE INDEX IF NOT EXISTS idx_todo_comments_user ON todo_comments(user_id);
+`);
+
 function ensureTodoColumn(name, definition) {
   const columns = db.prepare('PRAGMA table_info(todos)').all();
   const hasColumn = columns.some((column) => column.name === name);
@@ -130,10 +146,19 @@ ensureTodoColumn('sort_order', 'INTEGER');
 ensureTodoColumn('notes', 'TEXT');
 ensureTodoColumn('assigned_to', 'INTEGER');
 ensureTodoColumn('deleted_at', 'TEXT');
+ensureTodoColumn('completed_at', 'TEXT');
+ensureTodoColumn('archived_at', 'TEXT');
 
 ensureUserColumn('dark_mode', 'INTEGER DEFAULT 0');
 ensureUserColumn('theme', "TEXT DEFAULT 'aurora'");
 ensureUserColumn('view_density', "TEXT DEFAULT 'comfortable'");
+ensureUserColumn('font_scale', "TEXT DEFAULT 'medium'");
+ensureUserColumn('font_family', "TEXT DEFAULT 'system'");
+ensureUserColumn('default_task_priority', "TEXT DEFAULT 'medium'");
+ensureUserColumn('default_task_due_offset_days', 'INTEGER DEFAULT 0');
+ensureUserColumn('default_task_reminder_minutes', 'INTEGER');
+ensureUserColumn('auto_archive_days', 'INTEGER DEFAULT 0');
+ensureUserColumn('week_start_day', "TEXT DEFAULT 'sunday'");
 
 function ensureListColumn(name, definition) {
   const columns = db.prepare('PRAGMA table_info(lists)').all();
@@ -154,6 +179,91 @@ function ensureTodoParentIndex() {
 }
 
 ensureTodoParentIndex();
+
+function autoArchiveCompletedTodosForList(listId, userId) {
+  if (!listId || !userId) return;
+
+  const user = getUser(userId);
+  const autoArchiveDays = Number(user?.auto_archive_days ?? 0);
+
+  if (!Number.isFinite(autoArchiveDays) || autoArchiveDays <= 0) {
+    return;
+  }
+
+  const threshold = new Date(Date.now() - autoArchiveDays * 24 * 60 * 60 * 1000).toISOString();
+  const nowIso = new Date().toISOString();
+
+  db.prepare(
+    `
+      UPDATE todos
+      SET archived_at = ?, deleted_at = ?
+      WHERE list_id = ?
+        AND completed = 1
+        AND archived_at IS NULL
+        AND deleted_at IS NULL
+        AND completed_at IS NOT NULL
+        AND completed_at <= ?
+    `
+  ).run(nowIso, nowIso, listId, threshold);
+}
+
+function selectSiblingIds(listId, parentId, excludeId) {
+  if (parentId === null) {
+    if (excludeId !== undefined && excludeId !== null) {
+      return db
+        .prepare(
+          `
+          SELECT id
+          FROM todos
+          WHERE list_id = ?
+            AND parent_todo_id IS NULL
+            AND id != ?
+          ORDER BY sort_order ASC, created_at ASC
+        `
+        )
+        .all(listId, excludeId);
+    }
+
+    return db
+      .prepare(
+        `
+        SELECT id
+        FROM todos
+        WHERE list_id = ?
+          AND parent_todo_id IS NULL
+        ORDER BY sort_order ASC, created_at ASC
+      `
+      )
+      .all(listId);
+  }
+
+  if (excludeId !== undefined && excludeId !== null) {
+    return db
+      .prepare(
+        `
+        SELECT id
+        FROM todos
+        WHERE list_id = ?
+          AND parent_todo_id = ?
+          AND id != ?
+        ORDER BY sort_order ASC, created_at ASC
+      `
+      )
+      .all(listId, parentId, excludeId);
+  }
+
+  return db
+    .prepare(
+      `
+      SELECT id
+      FROM todos
+      WHERE list_id = ?
+        AND parent_todo_id = ?
+      ORDER BY sort_order ASC, created_at ASC
+    `
+    )
+    .all(listId, parentId);
+}
 
 function isUserMemberOfList(listId, userId) {
   if (!listId || !userId) return false;
@@ -319,7 +429,29 @@ export async function createUser(username, email, password) {
 }
 
 export function getUser(id) {
-  return db.prepare('SELECT id, username, email, is_admin, is_approved, dark_mode, theme, view_density, created_at FROM users WHERE id = ?').get(id);
+  return db
+    .prepare(
+      `SELECT
+        id,
+        username,
+        email,
+        is_admin,
+        is_approved,
+        dark_mode,
+        theme,
+        view_density,
+        font_scale,
+        font_family,
+        default_task_priority,
+        default_task_due_offset_days,
+        default_task_reminder_minutes,
+        auto_archive_days,
+        week_start_day,
+        created_at
+      FROM users
+      WHERE id = ?`
+    )
+    .get(id);
 }
 
 export function getUserByUsername(username) {
@@ -340,8 +472,38 @@ export function updateUserDarkMode(userId, darkMode) {
 }
 
 export function updateUserTheme(userId, theme) {
-  const allowedThemes = ['ocean', 'forest', 'sunset', 'midnight', 'candy', 'lavender', 'crimson', 'aurora', 'amber', 'monochrome', 'emerald'];
-  const normalizedTheme = allowedThemes.includes(theme) ? theme : 'aurora';
+  const allowedThemes = new Set([
+    'ocean',
+    'forest',
+    'sunset',
+    'midnight',
+    'candy',
+    'lavender',
+    'crimson',
+    'aurora',
+    'amber',
+    'monochrome',
+    'emerald'
+  ]);
+
+  const rawTheme = typeof theme === 'string' ? theme.trim().toLowerCase() : '';
+  let normalizedTheme = rawTheme || 'aurora';
+
+  if (!allowedThemes.has(normalizedTheme)) {
+    normalizedTheme = normalizedTheme
+      .replace(/[^a-z0-9_-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+
+    if (!normalizedTheme) {
+      normalizedTheme = 'aurora';
+    }
+  }
+
+  if (normalizedTheme.length > 64) {
+    normalizedTheme = normalizedTheme.slice(0, 64);
+  }
+
   db.prepare('UPDATE users SET theme = ? WHERE id = ?').run(normalizedTheme, userId);
   return getUser(userId);
 }
@@ -350,6 +512,103 @@ export function updateUserViewDensity(userId, viewDensity) {
   const allowedDensities = ['compact', 'comfortable', 'spacious'];
   const normalizedDensity = allowedDensities.includes(viewDensity) ? viewDensity : 'comfortable';
   db.prepare('UPDATE users SET view_density = ? WHERE id = ?').run(normalizedDensity, userId);
+  return getUser(userId);
+}
+
+export function updateUserPreferences(userId, preferences = {}) {
+  if (!userId) {
+    throw new Error('User ID is required to update preferences');
+  }
+
+  const allowedFontScales = new Set(['small', 'medium', 'large']);
+  const allowedFontFamilies = new Set(['system', 'serif', 'mono', 'rounded']);
+  const allowedPriorities = new Set(['low', 'medium', 'high']);
+  const allowedWeekStarts = new Set(['sunday', 'monday']);
+
+  const updates = [];
+  const params = [];
+
+  if (Object.prototype.hasOwnProperty.call(preferences, 'fontScale')) {
+    const value = String(preferences.fontScale ?? '').toLowerCase();
+    const normalized = allowedFontScales.has(value) ? value : 'medium';
+    updates.push('font_scale = ?');
+    params.push(normalized);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(preferences, 'fontFamily')) {
+    const value = String(preferences.fontFamily ?? '').toLowerCase();
+    const normalized = allowedFontFamilies.has(value) ? value : 'system';
+    updates.push('font_family = ?');
+    params.push(normalized);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(preferences, 'defaultTaskPriority')) {
+    const value = String(preferences.defaultTaskPriority ?? '').toLowerCase();
+    const normalized = allowedPriorities.has(value) ? value : 'medium';
+    updates.push('default_task_priority = ?');
+    params.push(normalized);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(preferences, 'defaultTaskDueOffsetDays')) {
+    const raw = preferences.defaultTaskDueOffsetDays;
+    let normalized = 0;
+    if (raw === null || raw === undefined || raw === '') {
+      normalized = 0;
+    } else {
+      const parsed = Number(raw);
+      if (!Number.isNaN(parsed) && Number.isFinite(parsed)) {
+        normalized = Math.min(Math.max(Math.trunc(parsed), 0), 365);
+      }
+    }
+    updates.push('default_task_due_offset_days = ?');
+    params.push(normalized);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(preferences, 'defaultTaskReminderMinutes')) {
+    const raw = preferences.defaultTaskReminderMinutes;
+    let normalized = null;
+    if (raw !== null && raw !== undefined && raw !== '') {
+      const parsed = Number(raw);
+      if (!Number.isNaN(parsed) && Number.isFinite(parsed) && parsed >= 0) {
+        normalized = Math.min(Math.trunc(parsed), 10080); // cap at 7 days
+      } else {
+        normalized = null;
+      }
+    }
+    updates.push('default_task_reminder_minutes = ?');
+    params.push(normalized);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(preferences, 'autoArchiveDays')) {
+    const raw = preferences.autoArchiveDays;
+    let normalized = 0;
+    if (raw === null || raw === undefined || raw === '') {
+      normalized = 0;
+    } else {
+      const parsed = Number(raw);
+      if (!Number.isNaN(parsed) && Number.isFinite(parsed) && parsed >= 0) {
+        normalized = Math.min(Math.trunc(parsed), 365);
+      }
+    }
+    updates.push('auto_archive_days = ?');
+    params.push(normalized);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(preferences, 'weekStartDay')) {
+    const value = String(preferences.weekStartDay ?? '').toLowerCase();
+    const normalized = allowedWeekStarts.has(value) ? value : 'sunday';
+    updates.push('week_start_day = ?');
+    params.push(normalized);
+  }
+
+  if (updates.length === 0) {
+    return getUser(userId);
+  }
+
+  const statement = `UPDATE users SET ${updates.join(', ')} WHERE id = ?`;
+  params.push(userId);
+  db.prepare(statement).run(...params);
+
   return getUser(userId);
 }
 
@@ -368,12 +627,31 @@ export function createSession(userId) {
 }
 
 export function getSession(sessionId) {
-  const session = db.prepare(`
-    SELECT s.*, u.username, u.email, u.is_admin, u.is_approved, u.dark_mode, u.theme, u.view_density
+  const session = db
+    .prepare(
+      `
+    SELECT
+      s.*,
+      u.username,
+      u.email,
+      u.is_admin,
+      u.is_approved,
+      u.dark_mode,
+      u.theme,
+      u.view_density,
+      u.font_scale,
+      u.font_family,
+      u.default_task_priority,
+      u.default_task_due_offset_days,
+      u.default_task_reminder_minutes,
+      u.auto_archive_days,
+      u.week_start_day
     FROM sessions s
     JOIN users u ON s.user_id = u.id
     WHERE s.id = ? AND s.expires_at > datetime('now')
-  `).get(sessionId);
+  `
+    )
+    .get(sessionId);
 
   return session;
 }
@@ -440,13 +718,15 @@ export function getTodosForList(listId, userId) {
     throw new Error('Access denied to this list');
   }
 
+  autoArchiveCompletedTodosForList(listId, userId);
+
   // Get todos with user information for completed_by (exclude soft-deleted)
   const todos = db.prepare(`
     SELECT t.*, u.username as completed_by_username, a.username as assigned_to_username, a.email as assigned_to_email
     FROM todos t
     LEFT JOIN users u ON t.completed_by = u.id
     LEFT JOIN users a ON t.assigned_to = a.id
-    WHERE t.list_id = ? AND t.deleted_at IS NULL
+    WHERE t.list_id = ? AND t.deleted_at IS NULL AND t.archived_at IS NULL
     ORDER BY
       CASE WHEN t.parent_todo_id IS NULL THEN 0 ELSE 1 END,
       CASE WHEN t.sort_order IS NULL THEN 1 ELSE 0 END,
@@ -571,6 +851,14 @@ export function createTodo(
   let parentTodo = null;
   let targetListId = listId;
 
+  const userPreferences = getUser(userId);
+  const fallbackPriority = normalizePriority(userPreferences?.default_task_priority ?? 'medium');
+  const defaultDueOffsetDaysRaw = Number(userPreferences?.default_task_due_offset_days ?? 0);
+  const defaultDueOffsetDays = Number.isFinite(defaultDueOffsetDaysRaw)
+    ? Math.max(0, Math.trunc(defaultDueOffsetDaysRaw))
+    : 0;
+  const defaultReminderMinutesRaw = userPreferences?.default_task_reminder_minutes ?? null;
+
   if (parentTodoId !== null && parentTodoId !== undefined) {
     parentTodo = getTodo(parentTodoId, userId);
 
@@ -589,9 +877,22 @@ export function createTodo(
     targetListId = parentTodo.list_id;
   }
 
-  const normalizedDueDate = normalizeDateTime(dueDate);
-  const reminderMinutes = normalizeReminderMinutes(reminderMinutesBefore);
-  const normalizedPriority = normalizePriority(priority);
+  let normalizedDueDate = normalizeDateTime(dueDate);
+  if (!normalizedDueDate && defaultDueOffsetDays > 0) {
+    const due = new Date();
+    due.setHours(17, 0, 0, 0);
+    due.setDate(due.getDate() + defaultDueOffsetDays);
+    normalizedDueDate = due.toISOString();
+  }
+
+  const hasExplicitReminder =
+    reminderMinutesBefore !== undefined &&
+    reminderMinutesBefore !== null &&
+    reminderMinutesBefore !== '';
+  const reminderMinutes = normalizeReminderMinutes(
+    hasExplicitReminder ? reminderMinutesBefore : defaultReminderMinutesRaw
+  );
+  const normalizedPriority = normalizePriority(priority ?? fallbackPriority);
   const normalizedAssignee = normalizeAssignee(targetListId, assignedTo);
   const nextOccurrence = isRecurring && recurrencePattern
     ? calculateNextOccurrence(recurrencePattern, normalizedDueDate ?? new Date())
@@ -666,6 +967,89 @@ export function reorderTodos(listId, userId, updates) {
   transaction(updates);
 }
 
+export function moveTodoToList(todoId, userId, targetListId, targetParentId = null, targetIndex = null) {
+  const id = Number(todoId);
+  const listId = Number(targetListId);
+  const parentId =
+    targetParentId === null || targetParentId === undefined ? null : Number(targetParentId);
+
+  if (!Number.isInteger(id) || !Number.isInteger(listId)) {
+    throw new Error('Invalid move payload');
+  }
+  if (parentId !== null && !Number.isInteger(parentId)) {
+    throw new Error('Invalid parent todo id');
+  }
+
+  const todo = getTodo(id, userId);
+  if (!todo) {
+    throw new Error('Todo not found');
+  }
+
+  const member = db
+    .prepare('SELECT 1 FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(listId, userId);
+  if (!member) {
+    throw new Error('Access denied to target list');
+  }
+
+  if (parentId === id) {
+    throw new Error('Todo cannot be its own parent');
+  }
+
+  if (parentId !== null) {
+    const parent = db.prepare('SELECT * FROM todos WHERE id = ?').get(parentId);
+    if (!parent) {
+      throw new Error('Parent todo not found');
+    }
+    if (parent.list_id !== listId) {
+      throw new Error('Parent todo must belong to target list');
+    }
+    if (parent.parent_todo_id !== null) {
+      throw new Error('Subtasks cannot have subtasks');
+    }
+  }
+
+  const updateSortOrder = db.prepare('UPDATE todos SET sort_order = ? WHERE id = ?');
+
+  const transaction = db.transaction(() => {
+    const previousListId = todo.list_id;
+    const previousParentId = todo.parent_todo_id ?? null;
+
+    // Reindex siblings in the previous location if we're changing list or parent
+    if (previousListId !== listId || previousParentId !== parentId) {
+      const remainingSiblings = selectSiblingIds(previousListId, previousParentId, id);
+      remainingSiblings.forEach((row, index) => updateSortOrder.run(index, row.id));
+    }
+
+    // Update todo's list and parent
+    db.prepare('UPDATE todos SET list_id = ?, parent_todo_id = ? WHERE id = ?').run(
+      listId,
+      parentId,
+      id
+    );
+
+    // Determine insertion index among new siblings
+    const siblings = selectSiblingIds(listId, parentId, id);
+    const resolvedIndex =
+      targetIndex === null || targetIndex === undefined
+        ? siblings.length
+        : Math.max(0, Math.min(Number(targetIndex), siblings.length));
+
+    const finalOrder = [...siblings];
+    finalOrder.splice(resolvedIndex, 0, { id });
+
+    finalOrder.forEach((row, index) => updateSortOrder.run(index, row.id));
+  });
+
+  transaction();
+
+  return {
+    todo: getTodo(id, userId),
+    previousListId: todo.list_id,
+    previousParentId: todo.parent_todo_id ?? null
+  };
+}
+
 export function updateTodo(id, userId, updates) {
   const todo = getTodo(id, userId);
   if (!todo) return null;
@@ -684,12 +1068,17 @@ export function updateTodo(id, userId, updates) {
   const completed = updates.completed !== undefined ? (updates.completed ? 1 : 0) : todo.completed;
   const text = updates.text !== undefined ? updates.text : todo.text;
   let completedBy = todo.completed_by;
+  let completedAt = todo.completed_at ?? null;
 
   if (updates.completed !== undefined) {
     if (updates.completed) {
       completedBy = todo.completed ? todo.completed_by : userId;
+      if (!todo.completed || !todo.completed_at) {
+        completedAt = new Date().toISOString();
+      }
     } else {
       completedBy = null;
+      completedAt = null;
     }
   }
 
@@ -714,8 +1103,8 @@ export function updateTodo(id, userId, updates) {
     ? normalizeAssignee(todo.list_id, updates.assigned_to !== undefined ? updates.assigned_to : updates.assignedTo)
     : (todo.assigned_to ?? null);
 
-  db.prepare('UPDATE todos SET text = ?, completed = ?, completed_by = ?, due_date = ?, reminder_minutes_before = ?, priority = ?, notes = ?, assigned_to = ? WHERE id = ?')
-    .run(text, completed, completedBy, dueDateUpdate, reminderMinutesUpdate, priorityUpdate, notesUpdate, assigneeUpdate, id);
+  db.prepare('UPDATE todos SET text = ?, completed = ?, completed_by = ?, completed_at = ?, due_date = ?, reminder_minutes_before = ?, priority = ?, notes = ?, assigned_to = ? WHERE id = ?')
+    .run(text, completed, completedBy, completedAt, dueDateUpdate, reminderMinutesUpdate, priorityUpdate, notesUpdate, assigneeUpdate, id);
 
   // If completing a recurring task, create the next occurrence
   if (todo.is_recurring && updates.completed && !todo.completed) {
@@ -737,7 +1126,7 @@ export function deleteTodo(id, userId) {
 
   // Soft delete - set deleted_at timestamp
   const deletedAt = new Date().toISOString();
-  const result = db.prepare('UPDATE todos SET deleted_at = ? WHERE id = ?').run(deletedAt, id);
+  const result = db.prepare('UPDATE todos SET deleted_at = ?, archived_at = ? WHERE id = ?').run(deletedAt, deletedAt, id);
   return result.changes > 0;
 }
 
@@ -791,7 +1180,7 @@ export function restoreTodo(id, userId) {
   if (!member) return null;
 
   // Restore by setting deleted_at to NULL
-  const result = db.prepare('UPDATE todos SET deleted_at = NULL WHERE id = ?').run(id);
+  const result = db.prepare('UPDATE todos SET deleted_at = NULL, archived_at = NULL WHERE id = ?').run(id);
 
   if (result.changes > 0) {
     return getTodo(id, userId);
@@ -1172,6 +1561,117 @@ export function removeMember(listId, userId, memberIdToRemove) {
   }
 
   db.prepare('DELETE FROM list_members WHERE list_id = ? AND user_id = ?').run(listId, memberIdToRemove);
+  return true;
+}
+
+// Comment functions
+export function createComment(todoId, userId, commentText) {
+  const todo = db.prepare(`
+    SELECT t.id, t.list_id
+    FROM todos t
+    WHERE t.id = ? AND t.deleted_at IS NULL
+  `).get(todoId);
+
+  if (!todo) {
+    throw new Error('Task not found');
+  }
+
+  // Verify user has access to the list
+  const member = db.prepare('SELECT user_id FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(todo.list_id, userId);
+
+  if (!member) {
+    throw new Error('Access denied');
+  }
+
+  const result = db.prepare(`
+    INSERT INTO todo_comments (todo_id, user_id, comment_text)
+    VALUES (?, ?, ?)
+  `).run(todoId, userId, commentText);
+
+  return {
+    id: result.lastInsertRowid,
+    todo_id: todoId,
+    user_id: userId,
+    comment_text: commentText,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+}
+
+export function getCommentsForTodo(todoId, userId) {
+  const todo = db.prepare(`
+    SELECT t.id, t.list_id
+    FROM todos t
+    WHERE t.id = ? AND t.deleted_at IS NULL
+  `).get(todoId);
+
+  if (!todo) {
+    return [];
+  }
+
+  // Verify user has access to the list
+  const member = db.prepare('SELECT user_id FROM list_members WHERE list_id = ? AND user_id = ?')
+    .get(todo.list_id, userId);
+
+  if (!member) {
+    return [];
+  }
+
+  return db.prepare(`
+    SELECT
+      c.id,
+      c.todo_id,
+      c.user_id,
+      c.comment_text,
+      c.created_at,
+      c.updated_at,
+      u.username
+    FROM todo_comments c
+    JOIN users u ON c.user_id = u.id
+    WHERE c.todo_id = ?
+    ORDER BY c.created_at ASC
+  `).all(todoId);
+}
+
+export function updateComment(commentId, userId, commentText) {
+  const comment = db.prepare('SELECT * FROM todo_comments WHERE id = ?').get(commentId);
+
+  if (!comment) {
+    throw new Error('Comment not found');
+  }
+
+  // Only the comment author can update it
+  if (comment.user_id !== userId) {
+    throw new Error('Access denied');
+  }
+
+  db.prepare(`
+    UPDATE todo_comments
+    SET comment_text = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(commentText, commentId);
+
+  return {
+    ...comment,
+    comment_text: commentText,
+    updated_at: new Date().toISOString()
+  };
+}
+
+export function deleteComment(commentId, userId) {
+  const comment = db.prepare('SELECT * FROM todo_comments WHERE id = ?').get(commentId);
+
+  if (!comment) {
+    throw new Error('Comment not found');
+  }
+
+  // Only the comment author can delete it
+  if (comment.user_id !== userId) {
+    throw new Error('Access denied');
+  }
+
+  db.prepare('DELETE FROM todo_comments WHERE id = ?').run(commentId);
   return true;
 }
 

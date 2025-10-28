@@ -169,10 +169,9 @@ export const themes = {
 
 // Apply theme CSS variables to the document
 export function applyTheme(themeName) {
-	const theme = themes[themeName] || themes.aurora;
+	const allThemes = getAllThemes();
+	const theme = allThemes[themeName] || themes.aurora;
 	const root = document.documentElement;
-
-	console.log('Applying theme:', themeName, 'Background:', theme.colors.background);
 
 	root.style.setProperty('--color-primary', theme.colors.primary);
 	root.style.setProperty('--color-primary-hover', theme.colors.primaryHover);
@@ -188,9 +187,6 @@ export function applyTheme(themeName) {
 	// Also set the background directly on body element to ensure it updates
 	document.body.style.background = theme.colors.background;
 	document.body.style.backgroundAttachment = 'fixed';
-
-	console.log('CSS Variable set:', root.style.getPropertyValue('--color-background'));
-	console.log('Body background set to:', document.body.style.background);
 }
 
 // View density configurations
@@ -233,4 +229,140 @@ export function applyViewDensity(densityName) {
 	root.style.setProperty('--todo-item-margin', density.spacing.todoItemMargin);
 	root.style.setProperty('--todo-item-font-size', density.spacing.fontSize);
 	root.style.setProperty('--todo-item-gap', density.spacing.gap);
+}
+
+export const fontScales = {
+	small: {
+		name: 'Compact',
+		rootSize: '15px',
+		bodyLineHeight: '1.45'
+	},
+	medium: {
+		name: 'Comfortable',
+		rootSize: '16px',
+		bodyLineHeight: '1.5'
+	},
+	large: {
+		name: 'Relaxed',
+		rootSize: '17px',
+		bodyLineHeight: '1.6'
+	}
+};
+
+export function applyFontScale(scaleName) {
+	const scale = fontScales[scaleName] || fontScales.medium;
+	const root = document.documentElement;
+
+	root.style.setProperty('--app-base-font-size', scale.rootSize);
+	root.style.setProperty('--app-body-line-height', scale.bodyLineHeight);
+}
+
+export const fontFamilies = {
+	system: {
+		name: 'System Default',
+		stack: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif"
+	},
+	serif: {
+		name: 'Classic Serif',
+		stack: "Georgia, 'Times New Roman', serif"
+	},
+	mono: {
+		name: 'Monospace',
+		stack: "'SFMono-Regular', Consolas, 'Liberation Mono', 'Courier New', monospace"
+	},
+	rounded: {
+		name: 'Rounded',
+		stack: "'Nunito', 'Quicksand', 'Segoe UI', sans-serif"
+	}
+};
+
+export function applyFontFamily(familyName) {
+	const family = fontFamilies[familyName] || fontFamilies.system;
+	const root = document.documentElement;
+
+	root.style.setProperty('--app-font-family', family.stack);
+}
+
+// Custom theme management
+const CUSTOM_THEMES_KEY = 'tido_custom_themes';
+
+export function getCustomThemes() {
+	if (typeof localStorage === 'undefined') return {};
+	const stored = localStorage.getItem(CUSTOM_THEMES_KEY);
+	return stored ? JSON.parse(stored) : {};
+}
+
+export function saveCustomTheme(theme) {
+	console.log('Saving custom theme:', theme);
+	const customThemes = getCustomThemes();
+	customThemes[theme.key] = {
+		name: theme.name,
+		colors: theme.colors,
+		custom: true
+	};
+	console.log('Updated custom themes:', customThemes);
+	localStorage.setItem(CUSTOM_THEMES_KEY, JSON.stringify(customThemes));
+	console.log('Saved to localStorage');
+	return theme.key;
+}
+
+export function deleteCustomTheme(themeKey) {
+	const customThemes = getCustomThemes();
+	delete customThemes[themeKey];
+	localStorage.setItem(CUSTOM_THEMES_KEY, JSON.stringify(customThemes));
+}
+
+export function getAllThemes() {
+	return { ...themes, ...getCustomThemes() };
+}
+
+export function exportTheme(themeKey) {
+	const allThemes = getAllThemes();
+	const theme = allThemes[themeKey];
+	if (!theme) return null;
+
+	const exportData = {
+		key: themeKey,
+		name: theme.name,
+		colors: theme.colors,
+		version: '1.0',
+		exportedAt: new Date().toISOString()
+	};
+
+	return JSON.stringify(exportData, null, 2);
+}
+
+export function importTheme(jsonString) {
+	try {
+		const themeData = JSON.parse(jsonString);
+
+		// Validate theme structure
+		if (!themeData.name || !themeData.colors) {
+			throw new Error('Invalid theme format');
+		}
+
+		// Generate a unique key if needed
+		let key = themeData.key || themeData.name.toLowerCase().replace(/\s+/g, '-');
+
+		// Ensure key is unique
+		const customThemes = getCustomThemes();
+		let counter = 1;
+		let originalKey = key;
+		while (customThemes[key] || themes[key]) {
+			key = `${originalKey}-${counter}`;
+			counter++;
+		}
+
+		const theme = {
+			key,
+			name: themeData.name,
+			colors: themeData.colors,
+			custom: true
+		};
+
+		saveCustomTheme(theme);
+		return theme;
+	} catch (error) {
+		throw new Error('Failed to import theme: ' + error.message);
+	}
 }
