@@ -59,8 +59,8 @@ A modern, real-time collaborative task management application built with SvelteK
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git
-cd todolist
+git clone https://github.com/Sky-dev-24/tido.git
+cd tido
 
 # Install dependencies
 npm install
