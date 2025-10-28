@@ -181,6 +181,15 @@ I plan to offer an official hosted service for teams who don’t want to manage 
 
 ## Contributing
 
+## Code of Conduct  
+This project adheres to the [Contributor Covenant v2.1](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code.  
+
+## Support  
+If you need help using Tido, please refer to the [SUPPORT.md](SUPPORT.md) file for guidance on bug reports, feature requests, and user questions.  
+
+## Security  
+For security issues or vulnerabilities, please see our [SECURITY.md](SECURITY.md) policy and follow the responsible disclosure guidelines.
+
 Contributions are welcome! Please follow these steps:
 
 1. Fork the repository
