@@ -167,8 +167,26 @@ Modern browsers with WebSocket support:
 
 ## License
 
-[Your License Here]
+This project is licensed under the **GNU Affero General Public License v3 (AGPL-3.0)**.
+
+This means:
+
+- ✅ You are free to use, modify, and self-host this software
+- ✅ You can contribute and build on it
+- ✅ You can use it commercially **as long as** you open source your modifications
+- ❗ If you offer it as a hosted service (SaaS), you must also release your modifications under the AGPL
+
+I plan to offer an official hosted service for teams who don’t want to manage deployment — this helps support ongoing development.
+
 
 ## Contributing
 
-[Your contribution guidelines here]
+Contributions are welcome! Please follow these steps:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/your-feature`)
+3. Commit your changes (`git commit -m "Add your feature"`)
+4. Push to your branch (`git push origin feature/your-feature`)
+5. Open a Pull Request
+
+By contributing, you agree that your contributions will be licensed under the AGPL-3.0 license.
