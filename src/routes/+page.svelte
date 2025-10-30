@@ -80,6 +80,7 @@ let showImportModal = $state(false);
 let importFileInput = $state(null);
 let importCreateNewList = $state(false);
 let importNewListName = $state('');
+let importSelectedFileName = $state('');
 let draggedTodoId = $state(null);
 let draggedOverDate = $state(null);
 let currentTime = $state(new Date());
@@ -2178,11 +2179,11 @@ async function selectList(list) {
 		}
 	}
 
-	async function exportList(format) {
-		if (!currentList) return;
+async function exportList(format) {
+	if (!currentList) return;
 
-		try {
-			const response = await fetch(`/api/export/${format}`, {
+	try {
+		const response = await fetch(`/api/export/${format}`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ listId: currentList.id })
@@ -2220,12 +2221,27 @@ async function selectList(list) {
 			console.error('Export error:', error);
 			alert('Failed to export list');
 		}
-	}
+}
 
-	async function handleImport(event) {
-		const fileInput = event.target;
-		const file = fileInput.files?.[0];
-		if (!file) return;
+function closeImportModal(resetFile = true) {
+	showImportModal = false;
+	importCreateNewList = false;
+	importNewListName = '';
+
+	if (resetFile) {
+		importSelectedFileName = '';
+		if (importFileInput) {
+			importFileInput.value = '';
+		}
+	}
+}
+
+async function handleImport(event) {
+	const fileInput = event.target;
+	const file = fileInput.files?.[0];
+	if (!file) return;
+
+	importSelectedFileName = file.name ?? '';
 
 		try {
 			const formData = new FormData();
@@ -2270,15 +2286,16 @@ async function selectList(list) {
 			}
 
 			// Reset form
-			showImportModal = false;
-			importCreateNewList = false;
-			importNewListName = '';
-			if (fileInput) fileInput.value = '';
-		} catch (error) {
-			console.error('Import error:', error);
-			alert('Failed to import file');
+			closeImportModal();
+	} catch (error) {
+		console.error('Import error:', error);
+		alert('Failed to import file');
+	} finally {
+		if (fileInput) {
+			fileInput.value = '';
 		}
 	}
+}
 
 	async function fetchArchivedLists() {
 		const response = await fetch('/api/lists?archived=true');
@@ -3034,14 +3051,14 @@ setContext('mobile-dnd', {
 		await updateTodoDueDate(todoId, newDueDate);
 	}
 
-	function handleOverlayKey(event, close) {
-		if (!event) return;
-		const actionableKeys = ['Escape', 'Enter', ' '];
-		if (actionableKeys.includes(event.key)) {
-			event.preventDefault();
-			close();
-		}
+function handleOverlayKey(event, close) {
+	if (!event) return;
+	const actionableKeys = ['Escape', 'Enter', ' '];
+	if (actionableKeys.includes(event.key)) {
+		event.preventDefault();
+		close();
 	}
+}
 
 	function startClock() {
 		if (clockTimer) {
@@ -4073,30 +4090,51 @@ setContext('mobile-dnd', {
 			<h2 id="export-title">Export List</h2>
 			<p class="modal-description">Choose a format to export "{currentList.name}"</p>
 
-			<div class="export-options">
-				<button class="export-option-btn" onclick={() => exportList('json')}>
-					<div class="export-option-icon">📄</div>
-					<div class="export-option-info">
-						<div class="export-option-title">JSON</div>
-						<div class="export-option-description">Full data with all metadata</div>
-					</div>
-				</button>
+			<div class="modal-section">
+				<h3 class="modal-subheading">Choose export format</h3>
+				<div class="modal-option-grid">
+					<button
+						type="button"
+						class="modal-option-btn"
+						data-variant="json"
+						onclick={() => exportList('json')}
+					>
+						<div class="modal-option-icon" aria-hidden="true">📄</div>
+						<div class="modal-option-copy">
+							<span class="modal-option-title">JSON</span>
+							<span class="modal-option-description">Full data with all metadata</span>
+						</div>
+						<span class="modal-option-cta">Download</span>
+					</button>
 
-				<button class="export-option-btn" onclick={() => exportList('csv')}>
-					<div class="export-option-icon">📊</div>
-					<div class="export-option-info">
-						<div class="export-option-title">CSV</div>
-						<div class="export-option-description">Spreadsheet compatible</div>
-					</div>
-				</button>
+					<button
+						type="button"
+						class="modal-option-btn"
+						data-variant="csv"
+						onclick={() => exportList('csv')}
+					>
+						<div class="modal-option-icon" aria-hidden="true">📊</div>
+						<div class="modal-option-copy">
+							<span class="modal-option-title">CSV</span>
+							<span class="modal-option-description">Spreadsheet compatible</span>
+						</div>
+						<span class="modal-option-cta">Download</span>
+					</button>
 
-				<button class="export-option-btn" onclick={() => exportList('pdf')}>
-					<div class="export-option-icon">📋</div>
-					<div class="export-option-info">
-						<div class="export-option-title">PDF</div>
-						<div class="export-option-description">Printable document</div>
-					</div>
-				</button>
+					<button
+						type="button"
+						class="modal-option-btn"
+						data-variant="pdf"
+						onclick={() => exportList('pdf')}
+					>
+						<div class="modal-option-icon" aria-hidden="true">📋</div>
+						<div class="modal-option-copy">
+							<span class="modal-option-title">PDF</span>
+							<span class="modal-option-description">Printable document</span>
+						</div>
+						<span class="modal-option-cta">Download</span>
+					</button>
+				</div>
 			</div>
 
 			<div class="modal-actions">
@@ -4111,9 +4149,9 @@ setContext('mobile-dnd', {
 		class="modal-overlay"
 		role="button"
 		tabindex="0"
-		aria-label="Close import modal"
-		onclick={() => showImportModal = false}
-		onkeydown={(event) => handleOverlayKey(event, () => showImportModal = false)}
+	aria-label="Close import modal"
+	onclick={() => closeImportModal()}
+	onkeydown={(event) => handleOverlayKey(event, () => closeImportModal())}
 	>
 		<div
 			class="modal"
@@ -4127,55 +4165,86 @@ setContext('mobile-dnd', {
 			<h2 id="import-title">Import Tasks</h2>
 			<p class="modal-description">Import tasks from JSON or CSV file</p>
 
-			<div class="import-section">
-				<div class="import-option">
-					<label>
-						<input
-							type="checkbox"
-							bind:checked={importCreateNewList}
-						/>
-						Create new list for imported tasks
-					</label>
-				</div>
+			<div class="modal-section">
+				<h3 class="modal-subheading">Destination</h3>
+				<label class="modal-checkbox-card">
+					<input
+						type="checkbox"
+						class="modal-checkbox-control"
+						bind:checked={importCreateNewList}
+					/>
+					<div class="modal-option-copy">
+						<span class="modal-option-title">Create a new list</span>
+						<span class="modal-option-description">
+							Keep imported tasks separate from "{currentList?.name ?? 'your current list'}"
+						</span>
+					</div>
+				</label>
 
 				{#if importCreateNewList}
-					<div class="import-option">
-						<label>
-							New list name:
-							<input
-								type="text"
-								bind:value={importNewListName}
-								placeholder="Enter list name"
-								class="import-input"
-							/>
-						</label>
-					</div>
-				{/if}
-
-				<div class="import-file-input">
-					<label for="import-file-input" class="btn-primary">
-						Choose File
+					<label class="modal-input-field" for="import-new-list-name">
+						<span class="modal-option-title">New list name</span>
+						<input
+							id="import-new-list-name"
+							type="text"
+							class="modal-input"
+							bind:value={importNewListName}
+							placeholder="Enter list name"
+						/>
 					</label>
-					<input
-						id="import-file-input"
-						type="file"
-						accept=".json,.csv"
-						onchange={handleImport}
-						bind:this={importFileInput}
-						style="display: none;"
-					/>
-				</div>
+				{/if}
+			</div>
 
-				<p class="import-note">
+			<div class="modal-section">
+				<h3 class="modal-subheading">Source file</h3>
+				<button
+					type="button"
+					class="file-drop"
+					onclick={() => {
+						if (importFileInput) {
+							importFileInput.click();
+						}
+					}}
+					aria-label={importSelectedFileName
+						? `Replace ${importSelectedFileName}`
+						: 'Choose a JSON or CSV file to import'}
+				>
+					<div class="file-drop-icon" aria-hidden="true">📥</div>
+					<div class="modal-option-copy">
+						<span class="modal-option-title">
+							{importSelectedFileName || 'Choose a JSON or CSV file'}
+						</span>
+						<span class="modal-option-description">
+							{importSelectedFileName
+								? 'Select a different file to replace this upload'
+								: 'Drag & drop or click to browse'}
+						</span>
+					</div>
+					<span class="file-drop-action">Browse</span>
+				</button>
+				<input
+					id="import-file-input"
+					class="file-input-hidden"
+					type="file"
+					accept=".json,.csv"
+					onchange={handleImport}
+					bind:this={importFileInput}
+					tabindex="-1"
+					aria-hidden="true"
+				/>
+				<p class="modal-footnote">
 					Supported formats: JSON, CSV
-					{#if !importCreateNewList}
-					<br />Tasks will be added to "{currentList.name}"
+					<br />
+					{#if importCreateNewList}
+						The new list will appear in your sidebar.
+					{:else}
+						Tasks will be added to "{currentList?.name ?? 'your selected list'}".
 					{/if}
 				</p>
 			</div>
 
 			<div class="modal-actions">
-				<button class="btn-secondary" onclick={() => { showImportModal = false; importCreateNewList = false; importNewListName = ''; }}>Cancel</button>
+				<button class="btn-secondary" onclick={() => closeImportModal()}>Cancel</button>
 			</div>
 		</div>
 	</div>
@@ -6231,107 +6300,219 @@ setContext('mobile-dnd', {
 		margin-bottom: 1.5rem;
 	}
 
-	.export-options {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
+	.modal-section {
+		background: var(--color-card-bg, rgba(255, 255, 255, 0.95));
+		border: 1px solid var(--color-card-border, #e0e0e0);
+		border-radius: 12px;
+		padding: 1.25rem;
 		margin-bottom: 1.5rem;
+		box-shadow: 0 12px 24px rgba(15, 23, 42, 0.06);
 	}
 
-	.export-option-btn {
+	.modal-subheading {
+		margin: 0 0 0.75rem 0;
+		font-size: 1rem;
+		font-weight: 600;
+		color: var(--color-text, #2c3e50);
+	}
+
+	.modal-option-grid {
+		display: grid;
+		gap: 0.75rem;
+	}
+
+	@media (min-width: 600px) {
+		.modal-option-grid {
+			grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+		}
+	}
+
+	.modal-option-btn {
 		display: flex;
 		align-items: center;
 		gap: 1rem;
 		padding: 1rem;
-		background: #f8f9fa;
-		border: 2px solid #e0e0e0;
-		border-radius: 8px;
+		border-radius: 12px;
+		border: 1px solid var(--color-card-border, #e0e0e0);
+		background: var(--color-card-bg, #ffffff);
 		cursor: pointer;
-		transition: all 0.2s;
+		transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s, background 0.2s;
 		text-align: left;
 		width: 100%;
 	}
 
-	.export-option-btn:hover {
-		background: #fff;
+	.modal-option-btn:hover,
+	.modal-option-btn:focus-visible {
 		border-color: var(--color-primary, #667eea);
+		box-shadow: 0 10px 20px rgba(102, 126, 234, 0.18);
 		transform: translateY(-2px);
-		box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+		outline: none;
+		background: rgba(102, 126, 234, 0.05);
 	}
 
-	.export-option-icon {
-		font-size: 2rem;
+	.modal-option-icon {
+		display: grid;
+		place-items: center;
+		width: 44px;
+		height: 44px;
+		border-radius: 12px;
+		font-size: 1.5rem;
 		flex-shrink: 0;
+		background: rgba(102, 126, 234, 0.1);
+		color: var(--color-primary, #667eea);
 	}
 
-	.export-option-info {
+	.modal-option-btn[data-variant='csv'] .modal-option-icon {
+		background: rgba(13, 148, 136, 0.12);
+		color: #0f766e;
+	}
+
+	.modal-option-btn[data-variant='pdf'] .modal-option-icon {
+		background: rgba(239, 68, 68, 0.12);
+		color: #b91c1c;
+	}
+
+	.modal-option-copy {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
 		flex: 1;
 	}
 
-	.export-option-title {
+	.modal-option-title {
 		font-weight: 600;
-		font-size: 1.1rem;
-		color: #2c3e50;
-		margin-bottom: 0.25rem;
+		color: var(--color-text, #1f2937);
+		word-break: break-word;
 	}
 
-	.export-option-description {
+	.modal-option-description {
 		font-size: 0.9rem;
-		color: #666;
+		color: var(--color-text-secondary, #666);
+		line-height: 1.4;
 	}
 
-	.import-section {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
+	.modal-option-cta {
+		font-weight: 600;
+		color: var(--color-primary, #667eea);
+		font-size: 0.9rem;
+		margin-left: auto;
 	}
 
-	.import-option {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.import-option label {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
+	.modal-checkbox-card {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		column-gap: 0.75rem;
+		row-gap: 0.35rem;
+		padding: 0.75rem 1rem;
+		border-radius: 12px;
+		border: 1px solid var(--color-card-border, #e0e0e0);
+		background: var(--color-card-bg, #ffffff);
 		cursor: pointer;
+		transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
 	}
 
-	.import-option input[type="checkbox"] {
-		width: auto;
-		margin: 0;
+	.modal-checkbox-card:hover {
+		border-color: var(--color-primary, #667eea);
+		box-shadow: 0 8px 16px rgba(102, 126, 234, 0.15);
+		background: rgba(102, 126, 234, 0.05);
 	}
 
-	.import-input {
+	.modal-checkbox-card:focus-within {
+		outline: none;
+		border-color: var(--color-primary, #667eea);
+		box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+		background: rgba(102, 126, 234, 0.08);
+	}
+
+	.modal-checkbox-control {
+		grid-row: 1 / span 2;
+		width: 18px;
+		height: 18px;
+		margin-top: 0.2rem;
+		accent-color: var(--color-primary, #667eea);
+	}
+
+	.modal-input-field {
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+		margin-top: 1rem;
+	}
+
+	.modal-input {
 		padding: 0.75rem;
-		border: 2px solid #e0e0e0;
-		border-radius: 4px;
+		border: 2px solid var(--color-card-border, #e0e0e0);
+		border-radius: 8px;
 		font-size: 1rem;
 		outline: none;
-		transition: border-color 0.2s;
+		transition: border-color 0.2s, box-shadow 0.2s;
 	}
 
-	.import-input:focus {
+	.modal-input:focus {
 		border-color: var(--color-primary, #667eea);
+		box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
 	}
 
-	.import-file-input {
+	.file-drop {
 		display: flex;
-		justify-content: center;
-		margin: 1rem 0;
-	}
-
-	.import-file-input label {
+		align-items: center;
+		gap: 1rem;
+		padding: 1rem;
+		border-radius: 12px;
+		border: 1px dashed var(--color-card-border, #cbd5f5);
+		background: rgba(102, 126, 234, 0.05);
 		cursor: pointer;
+		transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
 	}
 
-	.import-note {
-		font-size: 0.9rem;
-		color: #666;
-		text-align: center;
-		margin-top: 0.5rem;
+	.file-drop:hover {
+		border-color: var(--color-primary, #667eea);
+		background: rgba(102, 126, 234, 0.12);
+		box-shadow: 0 8px 16px rgba(102, 126, 234, 0.12);
+	}
+
+	.file-drop:focus-visible {
+		outline: none;
+		border-color: var(--color-primary, #667eea);
+		box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+	}
+
+	.file-drop-icon {
+		display: grid;
+		place-items: center;
+		width: 48px;
+		height: 48px;
+		border-radius: 50%;
+		background: rgba(102, 126, 234, 0.15);
+		color: var(--color-primary, #667eea);
+		font-size: 1.5rem;
+		flex-shrink: 0;
+	}
+
+	.file-drop-action {
+		margin-left: auto;
+		font-weight: 600;
+		color: var(--color-primary, #667eea);
+	}
+
+	.file-input-hidden {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
+	}
+
+	.modal-footnote {
+		font-size: 0.85rem;
+		color: var(--color-text-secondary, #666);
+		margin: 0.75rem 0 0;
+		text-align: left;
+		line-height: 1.4;
 	}
 
 	.invitations-list {
@@ -6999,6 +7180,91 @@ setContext('mobile-dnd', {
 
 	:global(body.dark-mode) .btn-secondary:hover {
 		background-color: #404057;
+	}
+
+	:global(body.dark-mode) .modal-section {
+		background: rgba(37, 37, 56, 0.85);
+		border-color: #353549;
+		box-shadow: 0 12px 24px rgba(8, 8, 20, 0.55);
+	}
+
+	:global(body.dark-mode) .modal-subheading {
+		color: #e0e0e0;
+	}
+
+	:global(body.dark-mode) .modal-option-btn {
+		background: #252538;
+		border-color: #353549;
+	}
+
+	:global(body.dark-mode) .modal-option-btn:hover,
+	:global(body.dark-mode) .modal-option-btn:focus-visible {
+		background: rgba(102, 126, 234, 0.12);
+	}
+
+	:global(body.dark-mode) .modal-option-title {
+		color: #e0e0e0;
+	}
+
+	:global(body.dark-mode) .modal-option-description,
+	:global(body.dark-mode) .modal-footnote {
+		color: #a1a1bb;
+	}
+
+	:global(body.dark-mode) .modal-option-cta,
+	:global(body.dark-mode) .file-drop-action {
+		color: #a5b4fc;
+	}
+
+	:global(body.dark-mode) .file-drop {
+		background: rgba(102, 126, 234, 0.12);
+		border-color: #3f3f60;
+	}
+
+	:global(body.dark-mode) .file-drop:hover {
+		background: rgba(102, 126, 234, 0.18);
+		border-color: #667eea;
+		box-shadow: 0 10px 24px rgba(102, 126, 234, 0.2);
+	}
+
+	:global(body.dark-mode) .file-drop:focus-visible {
+		border-color: #667eea;
+		box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.28);
+	}
+
+	:global(body.dark-mode) .file-drop-icon {
+		background: rgba(102, 126, 234, 0.2);
+		color: #cbd5f5;
+	}
+
+	:global(body.dark-mode) .modal-checkbox-card {
+		background: #252538;
+		border-color: #353549;
+	}
+
+	:global(body.dark-mode) .modal-checkbox-card:hover {
+		background: rgba(102, 126, 234, 0.12);
+	}
+
+	:global(body.dark-mode) .modal-checkbox-card:focus-within {
+		border-color: #667eea;
+		box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.28);
+		background: rgba(102, 126, 234, 0.16);
+	}
+
+	:global(body.dark-mode) .modal-input {
+		background: #252538;
+		border-color: #353549;
+		color: #e0e0e0;
+	}
+
+	:global(body.dark-mode) .modal-input:focus {
+		border-color: #667eea;
+		box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+	}
+
+	:global(body.dark-mode) .modal-checkbox-control {
+		accent-color: #667eea;
 	}
 
 	:global(body.dark-mode) .calendar-header h2 {
