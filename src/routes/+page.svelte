@@ -5,6 +5,7 @@
 	import { SvelteSet, SvelteMap } from 'svelte/reactivity';
 	import TodoItem from '$lib/components/TodoItem.svelte';
 	import MobileActionSheet from '$lib/components/MobileActionSheet.svelte';
+	import MindMapView from '$lib/components/MindMapView.svelte';
 	import {
 		initializeWebSocket,
 		joinList,
@@ -46,9 +47,13 @@
 	let invitations = $state([]);
 	let archivedLists = $state([]);
 	let newTodoText = $state('');
-	let filter = $state('all');
+	let filter = $state('active'); // Default to active view
+	let completingTodoIds = $state(new Set()); // Track todos currently animating completion
+	let newlyCreatedTodoIds = $state(new Set()); // Track newly created recurring tasks for animation
 let newTodoMode = $state('single');
 let recurrencePattern = $state('daily');
+let customIntervalNumber = $state(1);
+let customIntervalUnit = $state('days');
 let newTodoPriority = $state('medium');
 let newTodoAssignee = $state('');
 let showNewListModal = $state(false);
@@ -65,6 +70,7 @@ let newTodoDueDate = $state('');
 let newTodoReminder = $state('');
 let currentListMembers = $state([]);
 let sortMode = $state('manual');
+let displayStyle = $state('list'); // 'list' or 'compact'
 let showCalendarModal = $state(false);
 let deletedTodos = $state([]);
 let calendarReference = $state(new Date());
@@ -389,8 +395,16 @@ async function handleCameraCapture(event) {
 		'New photo task';
 
 	const isRecurringTask = newTodoMode === 'recurring';
-	const recurrenceValue = isRecurringTask ? recurrencePattern : null;
-	const dueDateValue = newTodoMode === 'deadline' ? newTodoDueDate || null : null;
+	// Build recurrence pattern - for custom, format as "custom:N:unit"
+	let recurrenceValue = null;
+	if (isRecurringTask) {
+		if (recurrencePattern === 'custom') {
+			recurrenceValue = `custom:${customIntervalNumber}:${customIntervalUnit}`;
+		} else {
+			recurrenceValue = recurrencePattern;
+		}
+	}
+	const dueDateValue = (newTodoMode === 'deadline' || newTodoMode === 'recurring') ? newTodoDueDate || null : null;
 	const reminderValue =
 		newTodoMode === 'deadline' && newTodoReminder ? Number(newTodoReminder) : null;
 	const priorityValue = resolvePriorityKey(newTodoPriority);
@@ -583,7 +597,13 @@ let filteredRootTodos = $derived.by(() => {
 	const roots = sortedRootTodos;
 	let filtered = roots;
 	if (filter === 'active') {
-		filtered = roots.filter((todo) => !todo.completed || todo.subtasks.some((sub) => !sub.completed));
+		filtered = roots.filter((todo) => {
+			// Keep todos visible if they're currently completing (for animation)
+			if (completingTodoIds.has(todo.id)) {
+				return true;
+			}
+			return !todo.completed || todo.subtasks.some((sub) => !sub.completed);
+		});
 	} else if (filter === 'completed') {
 		filtered = roots.filter((todo) => {
 			const subtasksComplete = !todo.subtasks.length || todo.subtasks.every((sub) => sub.completed);
@@ -595,6 +615,13 @@ let filteredRootTodos = $derived.by(() => {
 });
 
 let remainingCount = $derived(todos.filter((t) => !t.completed).length);
+
+const mindMapNodes = $derived.by(() => {
+	if (!currentList) return [];
+	return (filteredRootTodos ?? [])
+		.map((todo) => mapTodoForViews({ ...todo, depth: 0 }, { includeChildren: true }))
+		.filter(Boolean);
+});
 
 	let calendarLabel = $derived.by(() => {
 		if (calendarViewMode === 'day') {
@@ -806,15 +833,114 @@ let remainingCount = $derived(todos.filter((t) => !t.completed).length);
 		if (!Array.isArray(todos)) {
 			return counts;
 		}
-		for (const todo of todos) {
-			if (!todo || todo.completed) continue;
-			const key = resolvePriorityKey(todo.priority);
-			if (counts[key] !== undefined) {
-				counts[key] += 1;
-			}
+	for (const todo of todos) {
+		if (!todo || todo.completed) continue;
+		const key = resolvePriorityKey(todo.priority);
+		if (counts[key] !== undefined) {
+			counts[key] += 1;
 		}
-		return counts;
 	}
+	return counts;
+}
+
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+function toDate(value) {
+	if (!value) return null;
+	const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+	return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function startOfDay(value) {
+	const date = toDate(value);
+	if (!date) return null;
+	date.setHours(0, 0, 0, 0);
+	return date;
+}
+
+function formatRelativeDay(value, reference = currentTime) {
+	const target = toDate(value);
+	const base = toDate(reference);
+	if (!target || !base) return '';
+	const diffMs = target.getTime() - base.getTime();
+	const diffDays = Math.round(diffMs / ONE_DAY_MS);
+
+	if (diffDays === 0) return 'today';
+	if (diffDays === 1) return 'tomorrow';
+	if (diffDays === -1) return 'yesterday';
+	if (diffDays > 0 && diffDays <= 7) return `in ${diffDays} days`;
+	if (diffDays < 0 && diffDays >= -7) return `${Math.abs(diffDays)} days ago`;
+
+	return target.toLocaleDateString(undefined, {
+		month: 'short',
+		day: 'numeric',
+		year: target.getFullYear() !== base.getFullYear() ? 'numeric' : undefined
+	});
+}
+
+function createNotesPreview(notes) {
+	if (typeof notes !== 'string') return '';
+	const trimmed = notes.trim().replace(/\s+/g, ' ');
+	if (!trimmed) return '';
+	return trimmed.length <= 160 ? trimmed : `${trimmed.slice(0, 157)}...`;
+}
+
+function mapTodoForViews(todo, { includeChildren = false } = {}) {
+	if (!todo) return null;
+	const dueDate = toDate(todo.due_date);
+	const createdDate = toDate(todo.created_at);
+	const priorityKey = resolvePriorityKey(todo.priority);
+
+	const base = {
+		id: todo.id,
+		text: todo.text,
+		completed: Boolean(todo.completed),
+		isRecurring: Boolean(todo.is_recurring),
+		overdue: isTodoOverdue(todo),
+		dueDate: dueDate ? dueDate.toISOString() : null,
+		dueLabel: todo.due_date_label ?? (dueDate ? formatDueDate(dueDate) : ''),
+		priorityKey,
+		priority: todo.priority,
+		comment_count: Number.isFinite(Number(todo.comment_count)) ? Number(todo.comment_count) : 0,
+		assignedTo:
+			(todo.assigned_to_username && todo.assigned_to_username.trim()) ||
+			(todo.assigned_to_email && todo.assigned_to_email.trim()) ||
+			'',
+		totalSubtasks:
+			typeof todo.totalSubtasks === 'number'
+				? todo.totalSubtasks
+				: Array.isArray(todo.subtasks)
+				? todo.subtasks.length
+				: 0,
+		completedSubtasks:
+			typeof todo.completedSubtasks === 'number'
+				? todo.completedSubtasks
+				: Array.isArray(todo.subtasks)
+				? todo.subtasks.filter((sub) => sub?.completed).length
+				: 0,
+		subtasks: [],
+		notesPreview: createNotesPreview(todo.notes),
+		completedAtLabel: todo.completed_at ? formatRelativeDay(todo.completed_at) : '',
+		createdLabel: createdDate ? formatRelativeDay(createdDate) : '',
+		createdAt: createdDate ? createdDate.toISOString() : null,
+		depth: todo.depth ?? 0
+	};
+
+	if (Array.isArray(todo.subtasks) && todo.subtasks.length) {
+		const childInclude = includeChildren;
+		base.subtasks = todo.subtasks
+			.map((subtask) =>
+				mapTodoForViews(
+					{ ...subtask, depth: (todo.depth ?? 0) + 1 },
+					{ includeChildren: childInclude }
+				)
+			)
+			.filter(Boolean)
+			.map((subtask) => (childInclude ? subtask : { ...subtask, subtasks: [] }));
+	}
+
+	return base;
+}
 
 	function resetNewTodoFields({ preserveText = false } = {}) {
 		if (!preserveText) {
@@ -1939,7 +2065,51 @@ async function fetchTodos() {
 				checkDueReminders();
 			}
 		}
+}
+
+function updateTodoCommentCount(todoId, commentCount) {
+	const normalizedId = Number(todoId);
+	if (!Number.isFinite(normalizedId)) {
+		return;
 	}
+	const normalizedCount = Number.isFinite(Number(commentCount)) ? Number(commentCount) : 0;
+
+	let didUpdate = false;
+
+	function apply(list) {
+		let listChanged = false;
+		const updatedList = (list ?? []).map((todo) => {
+			if (!todo) return todo;
+			let updatedTodo = todo;
+
+			if (todo.id === normalizedId) {
+				updatedTodo = { ...todo, comment_count: normalizedCount };
+				listChanged = true;
+				didUpdate = true;
+			}
+
+			if (todo.subtasks?.length) {
+				const updatedSubtasks = apply(todo.subtasks);
+				if (updatedSubtasks !== todo.subtasks) {
+					if (updatedTodo === todo) {
+						updatedTodo = { ...updatedTodo };
+					}
+					updatedTodo.subtasks = updatedSubtasks;
+					listChanged = true;
+				}
+			}
+
+			return updatedTodo;
+		});
+
+		return listChanged ? updatedList : list;
+	}
+
+	const updatedTodos = apply(todos);
+	if (didUpdate) {
+		todos = updatedTodos;
+	}
+}
 
 async function selectList(list) {
 	if (!list) return;
@@ -2208,8 +2378,16 @@ async function selectList(list) {
 	async function addTodo() {
 		if (newTodoText.trim() && currentList) {
 			const isRecurringTask = newTodoMode === 'recurring';
-			const recurrenceValue = isRecurringTask ? recurrencePattern : null;
-			const dueDateValue = newTodoMode === 'deadline' ? (newTodoDueDate || null) : null;
+			// Build recurrence pattern - for custom, format as "custom:N:unit"
+			let recurrenceValue = null;
+			if (isRecurringTask) {
+				if (recurrencePattern === 'custom') {
+					recurrenceValue = `custom:${customIntervalNumber}:${customIntervalUnit}`;
+				} else {
+					recurrenceValue = recurrencePattern;
+				}
+			}
+			const dueDateValue = (newTodoMode === 'deadline' || newTodoMode === 'recurring') ? (newTodoDueDate || null) : null;
 			const reminderValue =
 				newTodoMode === 'deadline' && newTodoReminder
 					? Number(newTodoReminder)
@@ -2239,6 +2417,21 @@ async function selectList(list) {
 }
 
 	async function toggleTodo(id, currentCompleted) {
+		// Find the todo being toggled to check if it's recurring
+		const todoBeingToggled = todos.find(t => t.id === id);
+		const isRecurringTask = todoBeingToggled?.is_recurring;
+		const isCompletingRecurring = isRecurringTask && !currentCompleted;
+
+		// Store existing todo IDs before the toggle
+		const existingIds = new Set(todos.map(t => t.id));
+
+		// Add to completing set if we're in active filter and completing a recurring task
+		if (isCompletingRecurring && filter === 'active') {
+			const newSet = new Set(completingTodoIds);
+			newSet.add(id);
+			completingTodoIds = newSet;
+		}
+
 		const response = await fetch('/api/todos', {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
@@ -2250,6 +2443,30 @@ async function selectList(list) {
 
 		if (response.ok) {
 			await fetchTodos();
+
+			// After fetching, detect new recurring tasks
+			if (isCompletingRecurring && filter === 'active') {
+				const newTodos = todos.filter(t => !existingIds.has(t.id) && t.is_recurring);
+				if (newTodos.length > 0) {
+					const newIds = new Set(newlyCreatedTodoIds);
+					newTodos.forEach(t => newIds.add(t.id));
+					newlyCreatedTodoIds = newIds;
+
+					// Remove from newly created after animation (1.2 seconds)
+					setTimeout(() => {
+						const cleanedIds = new Set(newlyCreatedTodoIds);
+						newTodos.forEach(t => cleanedIds.delete(t.id));
+						newlyCreatedTodoIds = cleanedIds;
+					}, 1200);
+				}
+
+				// Remove from completing set after completion animation (1 second)
+				setTimeout(() => {
+					const newSet = new Set(completingTodoIds);
+					newSet.delete(id);
+					completingTodoIds = newSet;
+				}, 1000);
+			}
 		} else {
 			const error = await response.json();
 
@@ -2260,6 +2477,13 @@ async function selectList(list) {
 				alert('Cannot complete this task until all subtasks are completed.');
 			} else {
 				alert('Failed to update task: ' + (error.error || 'Unknown error'));
+			}
+
+			// Clean up completion tracking on error
+			if (isCompletingRecurring && filter === 'active') {
+				const newSet = new Set(completingTodoIds);
+				newSet.delete(id);
+				completingTodoIds = newSet;
 			}
 		}
 	}
@@ -2699,6 +2923,7 @@ setContext('todo-actions', {
 	updateTodoPriority,
 	updateTodoDueDate,
 	updateTodoNotes,
+	updateTodoCommentCount,
 	updateTodoAssignee,
 	uploadAttachment,
 	removeAttachment,
@@ -3202,9 +3427,32 @@ setContext('mobile-dnd', {
 				<select bind:value={recurrencePattern} class="recurrence-select">
 					<option value="daily">Daily</option>
 					<option value="weekly">Weekly</option>
+					<option value="biweekly">Biweekly (Every 2 weeks)</option>
 					<option value="monthly">Monthly</option>
 					<option value="yearly">Yearly</option>
+					<option value="custom">Custom interval...</option>
 				</select>
+			</label>
+			{#if recurrencePattern === 'custom'}
+				<div class="custom-interval-inputs">
+					<label class="custom-interval-number">
+						<span>Every</span>
+						<input type="number" bind:value={customIntervalNumber} min="1" max="999" />
+					</label>
+					<label class="custom-interval-unit">
+						<span>Unit</span>
+						<select bind:value={customIntervalUnit}>
+							<option value="days">Days</option>
+							<option value="weeks">Weeks</option>
+							<option value="months">Months</option>
+							<option value="years">Years</option>
+						</select>
+					</label>
+				</div>
+			{/if}
+			<label class="due-date-field">
+				<span>First due date</span>
+				<input type="datetime-local" bind:value={newTodoDueDate} />
 			</label>
 		</div>
 	{/if}
@@ -3252,28 +3500,56 @@ setContext('mobile-dnd', {
 		</div>
 	</div>
 
-	{#if currentList}
-		<div class="sort-toolbar">
-			<div class="sort-inline">
-				<div class="sort-inline-main">
-					<label for="sortModeSelect">Sort by</label>
-					<select id="sortModeSelect" bind:value={sortMode}>
-						<option value="manual">Custom order</option>
-						<option value="priority">Priority (high → low)</option>
-						<option value="dueDate">Due date (soonest first)</option>
-						<option value="created">Recently added</option>
-						<option value="alphabetical">Alphabetical</option>
-						<option value="assigned">Assigned</option>
-					</select>
-				</div>
-				{#if sortMode !== 'manual'}
-					<span class="sort-inline-hint">Return to Custom to drag & drop.</span>
-				{/if}
+{#if currentList}
+	<div class="sort-toolbar">
+		<div class="sort-inline">
+			<div class="sort-inline-main">
+				<label for="sortModeSelect">Sort by</label>
+				<select id="sortModeSelect" bind:value={sortMode}>
+					<option value="manual">Custom order</option>
+					<option value="priority">Priority (high → low)</option>
+					<option value="dueDate">Due date (soonest first)</option>
+					<option value="created">Recently added</option>
+					<option value="alphabetical">Alphabetical</option>
+					<option value="assigned">Assigned</option>
+				</select>
 			</div>
+			<div class="display-style-toggle">
+				<button
+					type="button"
+					class="display-style-btn"
+					class:active={displayStyle === 'list'}
+					onclick={() => (displayStyle = 'list')}
+					aria-label="List view"
+				>
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+						<line x1="3" y1="4" x2="13" y2="4"/>
+						<line x1="3" y1="8" x2="13" y2="8"/>
+						<line x1="3" y1="12" x2="13" y2="12"/>
+					</svg>
+				</button>
+				<button
+					type="button"
+					class="display-style-btn"
+					class:active={displayStyle === 'compact'}
+					onclick={() => (displayStyle = 'compact')}
+					aria-label="Compact view"
+				>
+					<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+						<rect x="2" y="2" width="5" height="5" rx="1"/>
+						<rect x="9" y="2" width="5" height="5" rx="1"/>
+						<rect x="2" y="9" width="5" height="5" rx="1"/>
+						<rect x="9" y="9" width="5" height="5" rx="1"/>
+					</svg>
+				</button>
+			</div>
+			{#if sortMode !== 'manual' && displayStyle === 'list'}
+				<span class="sort-inline-hint">Return to Custom to drag & drop.</span>
+			{/if}
 		</div>
-	{/if}
+	</div>
 
-	{#if currentList}
+	{#if displayStyle === 'list'}
 		{#if filteredRootTodos.length}
 			<ul class="todo-list">
 				{#if sortMode === 'manual' && draggedTodo && draggedTodo.parent_todo_id === null}
@@ -3288,19 +3564,21 @@ setContext('mobile-dnd', {
 					</li>
 				{/if}
 			{#each filteredRootTodos as todo (todo.id)}
-				<TodoItem
-					{todo}
-					level={0}
-					currentUserId={data.user.id}
-					onDragStart={sortMode === 'manual' ? handleDragStart : null}
-					onDragOver={sortMode === 'manual' ? handleDragOver : null}
-					onDrop={sortMode === 'manual' ? handleDrop : null}
-					onDragEnd={sortMode === 'manual' ? handleDragEnd : null}
-					dragIntentTargetId={dragIntent.targetId}
-					dragIntentType={dragIntent.type}
-					isDragging={sortMode === 'manual' && draggedTodo?.id === todo.id}
-					isDragOver={sortMode === 'manual' && dragOverTodo?.id === todo.id}
-				/>
+				<div class:newly-created-todo={newlyCreatedTodoIds.has(todo.id)}>
+					<TodoItem
+						{todo}
+						level={0}
+						currentUserId={data.user.id}
+						onDragStart={sortMode === 'manual' ? handleDragStart : null}
+						onDragOver={sortMode === 'manual' ? handleDragOver : null}
+						onDrop={sortMode === 'manual' ? handleDrop : null}
+						onDragEnd={sortMode === 'manual' ? handleDragEnd : null}
+						dragIntentTargetId={dragIntent.targetId}
+						dragIntentType={dragIntent.type}
+						isDragging={sortMode === 'manual' && draggedTodo?.id === todo.id}
+						isDragOver={sortMode === 'manual' && dragOverTodo?.id === todo.id}
+					/>
+				</div>
 			{/each}
 		</ul>
 		{:else}
@@ -3310,7 +3588,13 @@ setContext('mobile-dnd', {
 		<div class="footer">
 			<span>{remainingCount} {remainingCount === 1 ? 'item' : 'items'} left</span>
 		</div>
+	{:else if displayStyle === 'compact'}
+		<MindMapView nodes={mindMapNodes} emptyMessage="No tasks to display" />
+		<div class="alt-footer">
+			<span>{totalTodoCount} total • {activeTodoCount} active • {completedTodoCount} done</span>
+		</div>
 	{/if}
+{/if}
 	</div>
 </div>
 
@@ -4634,6 +4918,22 @@ setContext('mobile-dnd', {
 			gap: 0.75rem;
 		}
 
+		.sort-inline {
+			flex-direction: column;
+			align-items: stretch;
+			width: 100%;
+			gap: 0.5rem;
+		}
+
+		.display-style-toggle {
+			margin-left: 0;
+			align-self: flex-start;
+		}
+
+		.sort-inline-hint {
+			flex-basis: auto;
+		}
+
 	}
 
 	.main-content {
@@ -5256,6 +5556,37 @@ setContext('mobile-dnd', {
 		flex-wrap: wrap;
 	}
 
+	.custom-interval-inputs {
+		display: flex;
+		gap: 0.75rem;
+		align-items: flex-end;
+		width: 100%;
+	}
+
+	.custom-interval-number,
+	.custom-interval-unit {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		flex: 1;
+	}
+
+	.custom-interval-number input {
+		width: 100%;
+		padding: 0.5rem;
+		border: 2px solid #e0e0e0;
+		border-radius: 4px;
+		font-size: 1rem;
+	}
+
+	.custom-interval-unit select {
+		width: 100%;
+		padding: 0.5rem;
+		border: 2px solid #e0e0e0;
+		border-radius: 4px;
+		font-size: 1rem;
+	}
+
 	.task-type-label,
 	.priority-label,
 	.assignee-label,
@@ -5336,8 +5667,11 @@ setContext('mobile-dnd', {
 
 	.sort-inline {
 		display: inline-flex;
-		flex-direction: column;
-		gap: 0.4rem;
+		flex-direction: row;
+		align-items: center;
+		gap: 0.5rem;
+		column-gap: 0.75rem;
+		row-gap: 0.35rem;
 		background-color: #f8f9fa;
 		border: 2px solid #e0e0e0;
 		border-radius: 4px;
@@ -5345,6 +5679,7 @@ setContext('mobile-dnd', {
 		color: #555;
 		width: fit-content;
 		min-width: 0;
+		flex-wrap: wrap;
 	}
 
 	.sort-inline-main {
@@ -5371,6 +5706,46 @@ setContext('mobile-dnd', {
 	.sort-inline-hint {
 		font-size: 0.7rem;
 		color: #777;
+		flex-basis: 100%;
+		margin-top: 0.1rem;
+	}
+
+	.display-style-toggle {
+		display: inline-flex;
+		background: #f1f3f5;
+		border-radius: 6px;
+		padding: 2px;
+		margin-left: auto;
+		border: 1px solid #e0e3e7;
+	}
+
+	.display-style-btn {
+		background: transparent;
+		border: none;
+		border-radius: 4px;
+		padding: 0.4rem 0.5rem;
+		cursor: pointer;
+		color: #6b7280;
+		transition: all 0.15s ease;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		position: relative;
+	}
+
+	.display-style-btn svg {
+		display: block;
+	}
+
+	.display-style-btn:hover:not(.active) {
+		background: rgba(99, 102, 241, 0.06);
+		color: #4f46e5;
+	}
+
+	.display-style-btn.active {
+		background: white;
+		color: #4f46e5;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
 	}
 
 	.drop-zone {
@@ -5713,11 +6088,46 @@ setContext('mobile-dnd', {
 		color: #555;
 	}
 
+	.view-switcher {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin: 1.5rem 0 1rem;
+	}
+
+	.view-switcher button {
+		background: rgba(99, 102, 241, 0.1);
+		border: 1px solid transparent;
+		border-radius: 999px;
+		padding: 0.45rem 1rem;
+		font-size: 0.9rem;
+		cursor: pointer;
+		color: inherit;
+		transition: background 0.2s, border-color 0.2s, color 0.2s;
+	}
+
+	.view-switcher button:hover {
+		background: rgba(99, 102, 241, 0.18);
+	}
+
+	.view-switcher button.active {
+		background: rgba(99, 102, 241, 0.25);
+		border-color: rgba(99, 102, 241, 0.5);
+		color: #1a1d2d;
+	}
+
 	.footer {
 		margin-top: 1rem;
 		text-align: center;
 		color: #666;
 		font-size: 0.9rem;
+	}
+
+	.alt-footer {
+		margin-top: 1.5rem;
+		text-align: center;
+		font-size: 0.9rem;
+		color: #666;
 	}
 
 	/* Modals */
@@ -6441,7 +6851,9 @@ setContext('mobile-dnd', {
 	:global(body.dark-mode) .recurrence-select,
 	:global(body.dark-mode) .due-date-field input,
 	:global(body.dark-mode) .reminder-field select,
-	:global(body.dark-mode) .sort-inline-main select {
+	:global(body.dark-mode) .sort-inline-main select,
+	:global(body.dark-mode) .custom-interval-number input,
+	:global(body.dark-mode) .custom-interval-unit select {
 		background-color: #353549;
 		border-color: #404057;
 		color: #e0e0e0;
@@ -6515,6 +6927,45 @@ setContext('mobile-dnd', {
 
 	:global(body.dark-mode) .footer {
 		color: #999;
+	}
+
+	:global(body.dark-mode) .view-switcher button {
+		background: rgba(99, 102, 241, 0.2);
+		color: #d0d4ff;
+	}
+
+	:global(body.dark-mode) .view-switcher button:hover {
+		background: rgba(99, 102, 241, 0.3);
+	}
+
+	:global(body.dark-mode) .view-switcher button.active {
+		background: rgba(99, 102, 241, 0.4);
+		border-color: rgba(99, 102, 241, 0.7);
+		color: #f8fafc;
+	}
+
+	:global(body.dark-mode) .display-style-toggle {
+		background: #1e293b;
+		border-color: #334155;
+	}
+
+	:global(body.dark-mode) .display-style-btn {
+		color: #94a3b8;
+	}
+
+	:global(body.dark-mode) .display-style-btn:hover:not(.active) {
+		background: rgba(99, 102, 241, 0.15);
+		color: #a5b4fc;
+	}
+
+	:global(body.dark-mode) .display-style-btn.active {
+		background: #334155;
+		color: #a5b4fc;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
+	}
+
+	:global(body.dark-mode) .alt-footer {
+		color: #cbd5f5;
 	}
 
 	:global(body.dark-mode) .modal {
@@ -7378,6 +7829,25 @@ setContext('mobile-dnd', {
 			font-size: 10pt;
 			color: #666;
 			margin-top: 0.5rem;
+		}
+	}
+
+	/* Animation for newly created recurring tasks */
+	.newly-created-todo {
+		animation: slide-fade-in 0.6s ease-out;
+	}
+
+	@keyframes slide-fade-in {
+		0% {
+			opacity: 0;
+			transform: translateY(-20px) scale(0.95);
+		}
+		60% {
+			opacity: 1;
+		}
+		100% {
+			opacity: 1;
+			transform: translateY(0) scale(1);
 		}
 	}
 </style>

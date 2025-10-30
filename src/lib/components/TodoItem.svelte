@@ -1,8 +1,9 @@
 <script>
-	import { getContext, onMount, onDestroy } from 'svelte';
+	import { getContext, onMount, onDestroy, createEventDispatcher } from 'svelte';
 	import { marked } from 'marked';
 	import TodoAttachments from './TodoAttachments.svelte';
 	import TodoItemComponent from './TodoItem.svelte';
+	import CommentModal from './CommentModal.svelte';
 	import { emitEditing, emitStoppedEditing, emitTyping, emitStoppedTyping } from '$lib/stores/websocket.js';
 
 let {
@@ -146,6 +147,10 @@ let swipeStartY = 0;
 let longPressTimer;
 let longPressTriggered = false;
 let hostElement;
+
+// Comment modal state
+let commentModalOpen = $state(false);
+let commentCount = $state(Number.isFinite(Number(todo.comment_count)) ? Number(todo.comment_count) : 0);
 let swipeContentEl;
 
 function openQuickActions(event = null) {
@@ -641,6 +646,31 @@ function processCommentMentions(text) {
 	return text.replace(/@(\w+)/g, '<span class="mention">@$1</span>');
 }
 
+// Comment modal functions
+function openCommentModal(event) {
+	event?.stopPropagation?.();
+	commentModalOpen = true;
+}
+
+function closeCommentModal() {
+	commentModalOpen = false;
+}
+
+function handleCommentCountChange(event) {
+	const { todoId, count } = event.detail ?? {};
+	const normalizedId = Number(todoId);
+	if (!Number.isFinite(normalizedId)) return;
+
+	if (normalizedId === todo.id) {
+		const normalizedCount = Number.isFinite(Number(count)) ? Number(count) : 0;
+		commentCount = normalizedCount;
+		// Update the todo object if needed
+		if (todo.comment_count !== undefined) {
+			todo.comment_count = normalizedCount;
+		}
+	}
+}
+
 function startEditingAssignee() {
 	isEditingAssignee = true;
 	assigneeDraft = todo.assigned_to ? String(todo.assigned_to) : '';
@@ -849,6 +879,24 @@ function handleAssigneeKeyDown(event) {
 					</button>
 				{/if}
 			</div>
+			<div class="meta-item">
+				<button
+					class="comment-bubble"
+					class:comment-bubble-empty={!commentCount}
+					type="button"
+					aria-label={commentCount ? `${commentCount} comment${commentCount === 1 ? '' : 's'}` : 'Add comment'}
+					onclick={openCommentModal}
+				>
+					<svg class="comment-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+						<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+					</svg>
+					{#if commentCount > 0}
+						<span class="comment-count">{commentCount}</span>
+					{:else}
+						<span class="comment-count comment-count-muted">+</span>
+					{/if}
+				</button>
+			</div>
 			{#if todo.is_recurring}
 				<span class="meta-chip meta-chip--recurring">🔄 {todo.recurrence_pattern}</span>
 			{/if}
@@ -860,14 +908,23 @@ function handleAssigneeKeyDown(event) {
 		<div class="actions-cell">
 		<button
 			class="notes-toggle-btn"
+			class:notes-toggle-has-content={hasNotes || attachmentCount > 0}
 			type="button"
 			onclick={toggleNotes}
 			title={hasNotes || attachmentCount ? 'View notes & attachments' : 'Add notes or attachments'}
 			aria-label={notesExpanded ? 'Hide notes & attachments' : 'Show notes & attachments'}
 		>
-			📝
+			<svg class="notes-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+				<polyline points="14 2 14 8 20 8"/>
+				<line x1="16" y1="13" x2="8" y2="13"/>
+				<line x1="16" y1="17" x2="8" y2="17"/>
+				<polyline points="10 9 9 9 8 9"/>
+			</svg>
 			{#if attachmentCount > 0}
 				<span class="attachments-count">{attachmentCount}</span>
+			{:else if !hasNotes}
+				<span class="attachments-count attachments-count-muted">+</span>
 			{/if}
 		</button>
 			<button class="delete-btn" type="button" onclick={() => deleteTodo(todo.id)} aria-label="Delete">
@@ -1066,6 +1123,14 @@ function handleAssigneeKeyDown(event) {
 
 	</div>
 </li>
+
+<CommentModal
+	todoId={todo.id}
+	todoText={todo.text}
+	isOpen={commentModalOpen}
+	onClose={closeCommentModal}
+	on:comment-count-change={handleCommentCountChange}
+/>
 
 <style>
 	:global(:root) {
@@ -1795,38 +1860,51 @@ function handleAssigneeKeyDown(event) {
 	}
 
 	.notes-toggle-btn {
-		background: transparent;
-		border: none;
-		color: #7b88af;
+		background: rgba(16, 185, 129, 0.08);
+		border: 1px solid rgba(16, 185, 129, 0.18);
+		border-radius: 999px;
+		color: rgba(16, 185, 129, 0.9);
 		font-size: 1.1rem;
 		line-height: 1;
 		cursor: pointer;
-		padding: 0;
+		padding: 0.35rem 0.55rem;
 		margin-right: 0.5rem;
-		transition: all 0.2s ease;
+		transition: all 0.15s ease;
 		position: relative;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
+		gap: 0.35rem;
+	}
+
+	.notes-toggle-has-content {
+		background: rgba(16, 185, 129, 0.12);
+		border-color: rgba(16, 185, 129, 0.3);
 	}
 
 	.notes-toggle-btn:hover {
-		color: #667eea;
-		transform: scale(1.1);
+		background: rgba(16, 185, 129, 0.2);
+		border-color: rgba(16, 185, 129, 0.5);
+		transform: scale(1.05);
+	}
+
+	.notes-icon {
+		width: 16px;
+		height: 16px;
+		flex-shrink: 0;
 	}
 
 	.attachments-count {
-		position: absolute;
-		top: -0.35rem;
-		right: -0.35rem;
-		background: #ff7043;
-		color: white;
-		font-size: 0.65rem;
-		padding: 0.05rem 0.3rem;
-		border-radius: 999px;
+		font-size: 0.75rem;
 		font-weight: 600;
+		color: rgba(16, 185, 129, 1);
 		line-height: 1;
-		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+		min-width: 1ch;
+		text-align: center;
+	}
+
+	.attachments-count-muted {
+		color: rgba(16, 185, 129, 0.65);
 	}
 
 	.delete-btn {
@@ -2381,11 +2459,27 @@ function handleAssigneeKeyDown(event) {
 	}
 
 	:global(body.dark-mode) .notes-toggle-btn {
-		color: #9a9eb8;
+		background: rgba(16, 185, 129, 0.15);
+		border-color: rgba(16, 185, 129, 0.3);
+		color: rgba(167, 243, 208, 0.9);
+	}
+
+	:global(body.dark-mode) .notes-toggle-has-content {
+		background: rgba(16, 185, 129, 0.2);
+		border-color: rgba(16, 185, 129, 0.4);
 	}
 
 	:global(body.dark-mode) .notes-toggle-btn:hover {
-		color: #8b95e8;
+		background: rgba(16, 185, 129, 0.25);
+		border-color: rgba(16, 185, 129, 0.5);
+	}
+
+	:global(body.dark-mode) .attachments-count {
+		color: rgba(167, 243, 208, 1);
+	}
+
+	:global(body.dark-mode) .attachments-count-muted {
+		color: rgba(167, 243, 208, 0.65);
 	}
 
 	:global(body.dark-mode) .notes-section {
@@ -2651,6 +2745,98 @@ function handleAssigneeKeyDown(event) {
 
 	:global(body.dark-mode) .comment-input:focus {
 		border-color: var(--color-primary, #667eea);
+	}
+
+	/* Comment bubble styles */
+	.comment-bubble {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(99, 102, 241, 0.12);
+		border: 1px solid rgba(99, 102, 241, 0.25);
+		border-radius: 8px;
+		padding: 0.35rem 0.65rem;
+		cursor: pointer;
+		transition: all 150ms ease;
+		font-size: 0.8rem;
+		gap: 0.3rem;
+	}
+
+	.comment-bubble:hover {
+		background: rgba(99, 102, 241, 0.2);
+		border-color: rgba(99, 102, 241, 0.4);
+		transform: translateY(-1px);
+	}
+
+	.comment-bubble-empty {
+		background: rgba(148, 163, 184, 0.08);
+		border-color: rgba(148, 163, 184, 0.2);
+	}
+
+	.comment-bubble-empty:hover {
+		background: rgba(148, 163, 184, 0.15);
+		border-color: rgba(148, 163, 184, 0.3);
+	}
+
+	.comment-icon {
+		width: 14px;
+		height: 14px;
+		color: rgba(99, 102, 241, 0.85);
+		flex-shrink: 0;
+	}
+
+	.comment-bubble-empty .comment-icon {
+		color: rgba(148, 163, 184, 0.6);
+	}
+
+	.comment-count {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: rgba(99, 102, 241, 0.95);
+		line-height: 1;
+	}
+
+	.comment-count-muted {
+		color: rgba(148, 163, 184, 0.6);
+		font-size: 0.85rem;
+	}
+
+	/* Dark mode comment bubble styles */
+	:global(body.dark-mode) .comment-bubble {
+		background: rgba(99, 102, 241, 0.15);
+		border-color: rgba(99, 102, 241, 0.3);
+	}
+
+	:global(body.dark-mode) .comment-bubble:hover {
+		background: rgba(99, 102, 241, 0.25);
+		border-color: rgba(99, 102, 241, 0.45);
+	}
+
+	:global(body.dark-mode) .comment-bubble-empty {
+		background: rgba(148, 163, 184, 0.1);
+		border-color: rgba(148, 163, 184, 0.25);
+	}
+
+	:global(body.dark-mode) .comment-bubble-empty:hover {
+		background: rgba(148, 163, 184, 0.18);
+		border-color: rgba(148, 163, 184, 0.35);
+	}
+
+	:global(body.dark-mode) .comment-icon {
+		color: rgba(129, 140, 248, 0.9);
+	}
+
+	:global(body.dark-mode) .comment-bubble-empty .comment-icon {
+		color: rgba(148, 163, 184, 0.7);
+	}
+
+	:global(body.dark-mode) .comment-count {
+		color: rgba(165, 180, 252, 0.95);
+	}
+
+	:global(body.dark-mode) .comment-count-muted {
+		color: rgba(148, 163, 184, 0.7);
 	}
 
 	/* Mobile responsive styles */

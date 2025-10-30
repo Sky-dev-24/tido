@@ -722,10 +722,19 @@ export function getTodosForList(listId, userId) {
 
   // Get todos with user information for completed_by (exclude soft-deleted)
   const todos = db.prepare(`
-    SELECT t.*, u.username as completed_by_username, a.username as assigned_to_username, a.email as assigned_to_email
+    SELECT t.*,
+      u.username as completed_by_username,
+      a.username as assigned_to_username,
+      a.email as assigned_to_email,
+      COALESCE(c.comment_count, 0) as comment_count
     FROM todos t
     LEFT JOIN users u ON t.completed_by = u.id
     LEFT JOIN users a ON t.assigned_to = a.id
+    LEFT JOIN (
+      SELECT todo_id, COUNT(*) as comment_count
+      FROM todo_comments
+      GROUP BY todo_id
+    ) c ON t.id = c.todo_id
     WHERE t.list_id = ? AND t.deleted_at IS NULL AND t.archived_at IS NULL
     ORDER BY
       CASE WHEN t.parent_todo_id IS NULL THEN 0 ELSE 1 END,
@@ -738,16 +747,26 @@ export function getTodosForList(listId, userId) {
 
   return todos.map((todo) => ({
     ...todo,
-    attachments: attachmentsMap.get(todo.id) ?? []
+    attachments: attachmentsMap.get(todo.id) ?? [],
+    comment_count: todo.comment_count || 0
   }));
 }
 
 export function getTodo(id, userId) {
   const todo = db.prepare(`
-    SELECT t.*, u.username as completed_by_username, a.username as assigned_to_username, a.email as assigned_to_email
+    SELECT t.*,
+      u.username as completed_by_username,
+      a.username as assigned_to_username,
+      a.email as assigned_to_email,
+      COALESCE(c.comment_count, 0) as comment_count
     FROM todos t
     LEFT JOIN users u ON t.completed_by = u.id
     LEFT JOIN users a ON t.assigned_to = a.id
+    LEFT JOIN (
+      SELECT todo_id, COUNT(*) as comment_count
+      FROM todo_comments
+      GROUP BY todo_id
+    ) c ON t.id = c.todo_id
     WHERE t.id = ?
   `).get(id);
 
@@ -763,7 +782,8 @@ export function getTodo(id, userId) {
 
   return {
     ...todo,
-    attachments: attachments.get(todo.id) ?? []
+    attachments: attachments.get(todo.id) ?? [],
+    comment_count: todo.comment_count || 0
   };
 }
 
@@ -1232,19 +1252,49 @@ export function deleteAllDeletedTodosForList(listId, userId) {
 function calculateNextOccurrence(pattern, fromDate = new Date()) {
   const base = new Date(fromDate);
 
-  switch (pattern) {
-    case 'daily':
-      base.setDate(base.getDate() + 1);
-      break;
-    case 'weekly':
-      base.setDate(base.getDate() + 7);
-      break;
-    case 'monthly':
-      base.setMonth(base.getMonth() + 1);
-      break;
-    case 'yearly':
-      base.setFullYear(base.getFullYear() + 1);
-      break;
+  // Handle custom intervals (format: "custom:N:unit" e.g., "custom:3:days")
+  if (pattern?.startsWith('custom:')) {
+    const parts = pattern.split(':');
+    if (parts.length === 3) {
+      const interval = parseInt(parts[1], 10);
+      const unit = parts[2];
+
+      if (!isNaN(interval) && interval > 0) {
+        switch (unit) {
+          case 'days':
+            base.setDate(base.getDate() + interval);
+            break;
+          case 'weeks':
+            base.setDate(base.getDate() + (interval * 7));
+            break;
+          case 'months':
+            base.setMonth(base.getMonth() + interval);
+            break;
+          case 'years':
+            base.setFullYear(base.getFullYear() + interval);
+            break;
+        }
+      }
+    }
+  } else {
+    // Handle standard patterns
+    switch (pattern) {
+      case 'daily':
+        base.setDate(base.getDate() + 1);
+        break;
+      case 'weekly':
+        base.setDate(base.getDate() + 7);
+        break;
+      case 'biweekly':
+        base.setDate(base.getDate() + 14);
+        break;
+      case 'monthly':
+        base.setMonth(base.getMonth() + 1);
+        break;
+      case 'yearly':
+        base.setFullYear(base.getFullYear() + 1);
+        break;
+    }
   }
 
   return base.toISOString();
@@ -1262,12 +1312,13 @@ function createNextRecurrence(todo, userId) {
     : null;
   const priority = normalizePriority(todo.priority);
   const parentTodoId = todo.parent_todo_id ?? null;
+  const assignedTo = normalizeAssignee(todo.list_id, todo.assigned_to);
 
   const sortOrder = getNextSortOrder(todo.list_id, parentTodoId ?? null);
 
   db.prepare(`
-    INSERT INTO todos (list_id, user_id, text, completed, is_recurring, recurrence_pattern, next_occurrence, due_date, reminder_minutes_before, priority, parent_todo_id, sort_order)
-    VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO todos (list_id, user_id, text, completed, is_recurring, recurrence_pattern, next_occurrence, due_date, reminder_minutes_before, priority, parent_todo_id, sort_order, assigned_to)
+    VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     todo.list_id,
     userId,
@@ -1278,7 +1329,8 @@ function createNextRecurrence(todo, userId) {
     normalizeReminderMinutes(todo.reminder_minutes_before),
     priority,
     parentTodoId ?? null,
-    sortOrder
+    sortOrder,
+    assignedTo
   );
 }
 
