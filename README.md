@@ -114,6 +114,19 @@ cp .env.example .env
 Environment variables:
 - `NODE_ENV`: Set to `production` for production deployment
 - `PORT`: Port to run the server on (default: 3000)
+- `ORIGIN`: **[SECURITY]** Set to your application's URL for WebSocket CORS protection (e.g., `https://yourdomain.com`). Required for production. Leave unset for development to allow all origins.
+- `COOKIE_SECURE`: Set to `false` for HTTP (development), automatically `true` for HTTPS in production
+
+## Security Features
+
+Tido includes built-in security protections:
+- **Rate Limiting**: Authentication endpoints are protected against brute force attacks (5 requests/minute)
+- **CORS Protection**: WebSocket connections restricted to configured origin
+- **Secure Sessions**: httpOnly, sameSite cookies with 7-day expiration
+- **Password Hashing**: bcrypt with proper cost factor
+- **SQL Injection Protection**: Parameterized queries throughout
+
+**Important:** Always set the `ORIGIN` environment variable in production to prevent unauthorized WebSocket connections.
 
 ## First Time Setup
 

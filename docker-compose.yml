@@ -12,6 +12,8 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
+      # Security: WebSocket CORS origin (CRITICAL - set to your domain)
+      - ORIGIN=${ORIGIN:-false}
       # Cookie security - set to 'false' for HTTP access
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
       # Unraid compatibility - allow override via Portainer

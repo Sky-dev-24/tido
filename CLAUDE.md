@@ -13,6 +13,36 @@ Tido is a modern, real-time collaborative task management application built with
 - **Database**: SQLite with better-sqlite3 (configurable path via `DB_PATH` environment variable)
 - **Real-time**: Socket.io for WebSocket communication
 - **Authentication**: Session-based with bcrypt password hashing
+- **Security**: Rate limiting, CORS protection, SQL injection prevention
+
+## Security Features
+
+### Rate Limiting (`src/lib/rate-limit.js`)
+
+The application implements a sliding window rate limiter with three presets:
+- **AUTH**: 5 requests/minute for authentication endpoints (login, register)
+- **API**: 30 requests/minute for general API operations
+- **READ**: 100 requests/minute for read operations
+
+Rate limiting is applied via the `applyRateLimit()` helper function in API routes. The limiter:
+- Uses IP address as identifier (supports x-forwarded-for and x-real-ip headers)
+- Returns 429 status with Retry-After header when limit exceeded
+- Automatically cleans up old entries every 5 minutes
+- Adds X-RateLimit-* headers to responses
+
+### WebSocket CORS Protection
+
+WebSocket connections are restricted to the origin specified in the `ORIGIN` environment variable:
+- **Production**: MUST set `ORIGIN=https://yourdomain.com` to prevent unauthorized connections
+- **Development**: Leave unset or set to `false` to allow all origins
+- **Configuration**: `src/lib/websocket.server.js` reads `process.env.ORIGIN`
+
+### Additional Security Measures
+
+- **Session Security**: httpOnly, sameSite='strict' cookies with 7-day expiration
+- **Password Security**: bcrypt hashing with cost factor 10
+- **SQL Injection**: All queries use parameterized statements via better-sqlite3
+- **Permission Checks**: All database operations verify user access via `list_members` table
 
 ## Development Commands
 

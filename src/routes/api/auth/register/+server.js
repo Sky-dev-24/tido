@@ -1,7 +1,19 @@
 import { json } from '@sveltejs/kit';
 import { createUser, createSession } from '$lib/db.js';
+import { applyRateLimit, RATE_LIMITS } from '$lib/rate-limit.js';
 
-export async function POST({ request, cookies }) {
+export async function POST({ request, cookies, getClientAddress, setHeaders }) {
+  // Apply rate limiting
+  const rateLimitResult = applyRateLimit({ request, getClientAddress, setHeaders }, RATE_LIMITS.AUTH);
+  if (rateLimitResult) {
+    return json(rateLimitResult, {
+      status: 429,
+      headers: {
+        'Retry-After': rateLimitResult.retryAfter?.toString() || '60'
+      }
+    });
+  }
+
   try {
     const { username, email, password } = await request.json();
 
