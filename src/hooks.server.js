@@ -44,5 +44,34 @@ export async function handle({ event, resolve }) {
     }
   }
 
-  return resolve(event);
+  const response = await resolve(event);
+
+  // Add security headers to all responses
+  response.headers.set('X-Frame-Options', 'DENY');
+  response.headers.set('X-Content-Type-Options', 'nosniff');
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  response.headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+
+  // Add HSTS only if using HTTPS (check if not explicitly disabled)
+  if (process.env.COOKIE_SECURE !== 'false' && process.env.NODE_ENV === 'production') {
+    response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+
+  // Content Security Policy
+  // Note: This is a balanced CSP that allows the app to function while providing security
+  const cspDirectives = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'", // 'unsafe-inline' needed for Svelte
+    "style-src 'self' 'unsafe-inline'",  // 'unsafe-inline' needed for dynamic styles
+    "img-src 'self' data: blob:",        // Allow data URIs for images
+    "font-src 'self' data:",
+    "connect-src 'self' ws: wss:",       // Allow WebSocket connections
+    "frame-ancestors 'none'",            // Equivalent to X-Frame-Options: DENY
+    "base-uri 'self'",
+    "form-action 'self'"
+  ].join('; ');
+
+  response.headers.set('Content-Security-Policy', cspDirectives);
+
+  return response;
 }

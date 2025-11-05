@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { createUser, createSession } from '$lib/db.js';
 import { applyRateLimit, RATE_LIMITS } from '$lib/rate-limit.js';
+import { validateUsername, isValidEmail, validatePassword } from '$lib/validation.js';
 
 export async function POST({ request, cookies, getClientAddress, setHeaders }) {
   // Apply rate limiting
@@ -17,17 +18,21 @@ export async function POST({ request, cookies, getClientAddress, setHeaders }) {
   try {
     const { username, email, password } = await request.json();
 
-    // Validation
-    if (!username || username.length < 3) {
-      return json({ error: 'Username must be at least 3 characters' }, { status: 400 });
+    // Validate username
+    const usernameValidation = validateUsername(username);
+    if (!usernameValidation.isValid) {
+      return json({ error: usernameValidation.error }, { status: 400 });
     }
 
-    if (!email || !email.includes('@')) {
-      return json({ error: 'Valid email is required' }, { status: 400 });
+    // Validate email
+    if (!isValidEmail(email)) {
+      return json({ error: 'Invalid email address format' }, { status: 400 });
     }
 
-    if (!password || password.length < 6) {
-      return json({ error: 'Password must be at least 6 characters' }, { status: 400 });
+    // Validate password
+    const passwordValidation = validatePassword(password);
+    if (!passwordValidation.isValid) {
+      return json({ error: passwordValidation.error }, { status: 400 });
     }
 
     // Create user
