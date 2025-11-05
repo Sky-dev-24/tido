@@ -1,12 +1,13 @@
 import { json } from '@sveltejs/kit';
-import { createUser, createSession } from '$lib/db.js';
+import { createUser, createSession, createEmailVerificationToken } from '$lib/db.js';
 import { applyRateLimit, RATE_LIMITS } from '$lib/rate-limit.js';
 import { validateUsername, isValidEmail, validatePassword } from '$lib/validation.js';
+import { sendEmailVerification } from '$lib/email.js';
 import { createLogger } from '$lib/logger.js';
 
 const logger = createLogger('Auth');
 
-export async function POST({ request, cookies, getClientAddress, setHeaders }) {
+export async function POST({ request, cookies, getClientAddress, setHeaders, url }) {
   // Apply rate limiting
   const rateLimitResult = applyRateLimit({ request, getClientAddress, setHeaders }, RATE_LIMITS.AUTH);
   if (rateLimitResult) {
@@ -41,6 +42,28 @@ export async function POST({ request, cookies, getClientAddress, setHeaders }) {
     // Create user
     const user = await createUser(username, email, password);
 
+    // Generate email verification token
+    const verificationToken = createEmailVerificationToken(user.id);
+
+    // Get base URL from request
+    const protocol = url.protocol;
+    const host = url.host;
+    const baseUrl = `${protocol}//${host}`;
+
+    // Send verification email
+    const emailSent = await sendEmailVerification(
+      user.email,
+      user.username,
+      verificationToken,
+      baseUrl
+    );
+
+    if (emailSent) {
+      logger.info('Verification email sent to new user', { userId: user.id });
+    } else {
+      logger.warn('Verification email not sent (SMTP not configured)', { userId: user.id });
+    }
+
     // If user is approved (first user/admin), create session immediately
     if (user.is_approved) {
       const session = createSession(user.id);
@@ -55,11 +78,11 @@ export async function POST({ request, cookies, getClientAddress, setHeaders }) {
         maxAge: 60 * 60 * 24 * 7 // 7 days
       });
 
-      return json({ user, needsApproval: false }, { status: 201 });
+      return json({ user, needsApproval: false, emailSent }, { status: 201 });
     }
 
     // User needs approval
-    return json({ user, needsApproval: true }, { status: 201 });
+    return json({ user, needsApproval: true, emailSent }, { status: 201 });
 
   } catch (error) {
     logger.error('Registration error', error);

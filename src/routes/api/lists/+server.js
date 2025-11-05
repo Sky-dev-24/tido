@@ -9,6 +9,10 @@ import {
 	restoreList,
 	deleteList
 } from '$lib/db.js';
+import { validateListName, sanitizeText } from '$lib/validation.js';
+import { createLogger } from '$lib/logger.js';
+
+const logger = createLogger('ListsAPI');
 
 // GET - Fetch all lists for the authenticated user
 export async function GET({ locals, url }) {
@@ -21,7 +25,7 @@ export async function GET({ locals, url }) {
 		const lists = archived ? getArchivedLists(locals.user.id) : getUserLists(locals.user.id);
 		return json(lists);
 	} catch (error) {
-		console.error('Error fetching lists:', error);
+		logger.error('Error fetching lists', error);
 		return json({ error: 'Failed to fetch lists' }, { status: 500 });
 	}
 }
@@ -35,14 +39,22 @@ export async function POST({ request, locals }) {
 	try {
 		const { name, isShared } = await request.json();
 
-		if (!name || !name.trim()) {
-			return json({ error: 'List name is required' }, { status: 400 });
+		// Validate list name
+		const nameValidation = validateListName(name);
+		if (!nameValidation.isValid) {
+			return json({ error: nameValidation.error }, { status: 400 });
 		}
 
-		const list = createList(locals.user.id, name.trim(), isShared || false);
+		// Sanitize list name
+		const sanitizedName = sanitizeText(nameValidation.value, {
+			maxLength: 100,
+			allowNewlines: false
+		});
+
+		const list = createList(locals.user.id, sanitizedName, isShared || false);
 		return json(list, { status: 201 });
 	} catch (error) {
-		console.error('Error creating list:', error);
+		logger.error('Error creating list', error);
 		return json({ error: 'Failed to create list' }, { status: 500 });
 	}
 }
@@ -72,18 +84,25 @@ export async function PATCH({ request, locals }) {
 			return json({ success: true });
 		}
 
-		// Handle name update
-		if (!name || !name.trim()) {
-			return json({ error: 'List name is required' }, { status: 400 });
+		// Handle name update - validate and sanitize
+		const nameValidation = validateListName(name);
+		if (!nameValidation.isValid) {
+			return json({ error: nameValidation.error }, { status: 400 });
 		}
 
-		const updatedList = updateList(listId, locals.user.id, { name: name.trim() });
+		// Sanitize list name
+		const sanitizedName = sanitizeText(nameValidation.value, {
+			maxLength: 100,
+			allowNewlines: false
+		});
+
+		const updatedList = updateList(listId, locals.user.id, { name: sanitizedName });
 		return json(updatedList);
 	} catch (error) {
 		if (error.message === 'Insufficient permissions') {
 			return json({ error: 'Insufficient permissions' }, { status: 403 });
 		}
-		console.error('Error updating list:', error);
+		logger.error('Error updating list', error);
 		return json({ error: 'Failed to update list' }, { status: 500 });
 	}
 }
@@ -110,7 +129,7 @@ export async function DELETE({ request, locals }) {
 		if (error.message === 'List must be archived before deletion') {
 			return json({ error: 'List must be archived before deletion' }, { status: 400 });
 		}
-		console.error('Error deleting list:', error);
+		logger.error('Error deleting list', error);
 		return json({ error: 'Failed to delete list' }, { status: 500 });
 	}
 }

@@ -240,8 +240,7 @@ LOG_LEVEL=ERROR
 **Fix:**
 - Enhanced `src/lib/validation.js` with `sanitizeText()` function
 - HTML entity encoding for special characters (< > & " ' /)
-- Applied to todo creation endpoint (`src/routes/api/todos/+server.js`)
-- Validates and sanitizes todo text before storage
+- Applied to all user-generated content endpoints
 
 **Sanitization Process:**
 1. Validate text length and format
@@ -256,12 +255,120 @@ LOG_LEVEL=ERROR
 4. Truncate to maximum length
 
 **Applied to:**
-- ✅ Todo text creation
-- ⚠️ Todo notes (needs implementation)
-- ⚠️ Comments (needs implementation)
-- ⚠️ List names (needs implementation)
+- ✅ Todo text creation (`src/routes/api/todos/+server.js` POST)
+- ✅ Todo text updates (`src/routes/api/todos/+server.js` PATCH)
+- ✅ Todo notes (`src/routes/api/todos/+server.js` PATCH)
+- ✅ Comments creation (`src/routes/api/comments/+server.js` POST)
+- ✅ Comments updates (`src/routes/api/comments/[id]/+server.js` PATCH)
+- ✅ List names (`src/routes/api/lists/+server.js` POST/PATCH)
 
-### 9. Documentation Updates
+### 11. Password Reset Functionality (HIGH)
+**Date:** November 5, 2025
+**Issue:** No password recovery mechanism
+**Risk:** Users locked out of accounts, support burden
+
+**Fix:**
+- Created `src/lib/email.js` with SMTP email sending support
+- Added password reset token tables to database schema
+- Implemented secure token generation (32 bytes cryptographically random)
+- Token expiry: 1 hour
+- Rate limited endpoints (5 req/min)
+
+**Implementation:**
+- **Database schema** (`src/lib/db.js`):
+  - `password_reset_tokens` table with expiry and usage tracking
+  - `createPasswordResetToken()` - Generate secure token
+  - `getPasswordResetToken()` - Validate token and check expiry
+  - `markPasswordResetTokenUsed()` - Invalidate used tokens
+  - `updateUserPassword()` - Update password with bcrypt hashing
+  - `getUserByEmail()` - Look up user by email
+  - `cleanupExpiredPasswordResetTokens()` - Auto cleanup
+
+- **API Endpoints:**
+  - `POST /api/auth/request-password-reset` - Request reset email
+  - `POST /api/auth/reset-password` - Confirm reset with token
+  - Both endpoints rate limited (AUTH: 5 req/min)
+
+- **UI Pages:**
+  - `/forgot-password` - Request password reset
+  - `/reset-password?token=...` - Reset password with token
+  - Link added to login page
+
+**Security Features:**
+- Email enumeration protection (always returns success message)
+- Tokens expire after 1 hour
+- Single-use tokens (marked as used after password reset)
+- Old tokens invalidated when new one requested
+- Password strength validation enforced
+- Rate limiting to prevent abuse
+
+**Configuration:**
+```bash
+# Required for password reset emails
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+SMTP_FROM=noreply@yourdomain.com
+```
+
+### 12. Email Verification System (HIGH)
+**Date:** November 5, 2025
+**Issue:** No email ownership verification
+**Risk:** Account creation with fake emails, spam potential
+
+**Fix:**
+- Added email verification token tables to database schema
+- Verification emails sent on registration
+- Secure token generation (32 bytes cryptographically random)
+- Token expiry: 24 hours
+- `email_verified` column added to users table
+
+**Implementation:**
+- **Database schema** (`src/lib/db.js`):
+  - `email_verification_tokens` table with expiry and verification tracking
+  - `createEmailVerificationToken()` - Generate secure token
+  - `getEmailVerificationToken()` - Validate token and check expiry
+  - `verifyEmail()` - Mark email as verified
+  - `isEmailVerified()` - Check verification status
+  - `cleanupExpiredEmailVerificationTokens()` - Auto cleanup
+  - `email_verified` column in users table
+
+- **API Endpoints:**
+  - `POST /api/auth/verify-email` - Verify email with token
+  - `POST /api/auth/resend-verification` - Resend verification email
+  - Both endpoints rate limited (AUTH: 5 req/min)
+
+- **UI Pages:**
+  - `/verify-email?token=...` - Email verification page
+  - Auto-verifies on page load, redirects to app
+
+- **Integration:**
+  - Registration endpoint updated to send verification emails
+  - Verification email sent automatically after registration
+  - Email notification includes approval notification function
+
+**Security Features:**
+- Tokens expire after 24 hours
+- Single-use tokens (marked as verified after use)
+- Old tokens deleted when new one requested
+- User must be logged in to resend verification
+- Already verified emails cannot be re-verified
+- Rate limiting to prevent abuse
+
+**Email Templates:**
+- HTML and plain text versions
+- Branded with Tido identity
+- Clear calls-to-action
+- Security warnings included
+
+**Note:** Email functionality is optional. If SMTP is not configured:
+- Emails are logged to console instead of sent
+- Application continues to function normally
+- Useful for development/testing without email server
+
+### 13. Documentation Updates
 **Files Updated:**
 - `README.md` - Added Security Features section
 - `CLAUDE.md` - Added comprehensive security documentation
@@ -313,21 +420,38 @@ const customLimiter = createRateLimiter({
 
 Before deploying to production:
 
+### Required
 - [ ] Set `ORIGIN=https://yourdomain.com` in environment variables
 - [ ] Set `COOKIE_SECURE=true` or leave unset for HTTPS
+- [ ] Set `LOG_LEVEL=INFO` for production logging
+
+### Optional (Email Features)
+- [ ] Configure SMTP settings if email features desired:
+  - [ ] `SMTP_HOST` - SMTP server hostname
+  - [ ] `SMTP_PORT` - SMTP port (usually 587)
+  - [ ] `SMTP_SECURE` - true for port 465, false for other ports
+  - [ ] `SMTP_USER` - SMTP username/email
+  - [ ] `SMTP_PASS` - SMTP password/app password
+  - [ ] `SMTP_FROM` - Sender email address
+- [ ] Test password reset flow
+- [ ] Test email verification flow
+
+### Security Testing
 - [ ] Test WebSocket connection from correct origin
 - [ ] Test WebSocket rejection from unauthorized origin
 - [ ] Verify rate limiting on login endpoint (max 5 req/min)
 - [ ] Verify rate limiting on register endpoint (max 5 req/min)
+- [ ] Verify rate limiting on password reset endpoints (max 5 req/min)
 - [ ] Check that X-RateLimit-* headers are present in responses
 - [ ] Verify security headers are present in all responses
 - [ ] Test file upload with various file types (should validate correctly)
 - [ ] Test file upload with executable files (should be blocked)
 - [ ] Verify password requirements are enforced (min 8 chars, complexity)
+- [ ] Test XSS prevention in todos, notes, comments, and list names
 
 ## Security Status Summary
 
-### ✅ Completed (Phase 1, 2 & 3)
+### ✅ Completed (Phase 1, 2, 3 & 4)
 1. ✅ WebSocket CORS protection - `ORIGIN` environment variable
 2. ✅ Rate limiting - Auth endpoints (5 req/min)
 3. ✅ Email validation - RFC 5322 compliant
@@ -337,39 +461,43 @@ Before deploying to production:
 7. ✅ Username validation - Alphanumeric + underscore/hyphen
 8. ✅ CSRF infrastructure - Ready for implementation
 9. ✅ Production logging system - Sensitive data redaction, log levels
-10. ✅ Input sanitization - XSS prevention for todo text
+10. ✅ Input sanitization - XSS prevention for all user-generated content
+11. ✅ Password reset functionality - SMTP email, secure tokens, rate limited
+12. ✅ Email verification - Automatic on registration, resend capability
 
 ### 🔄 In Progress / Needs Attention
-11. ⚠️ Console.log statements - Critical files updated, ~100 remain in client code
-12. ⚠️ CSRF enforcement - Infrastructure ready but not enforced yet
-13. ⚠️ Sanitization - Todo notes, comments, list names need implementation
+13. ⚠️ Console.log statements - Critical files updated, ~100 remain in client code
+14. ⚠️ CSRF enforcement - Infrastructure ready but not enforced yet
+15. ⚠️ Email verification enforcement - Optional, not required for access
 
 ### 📋 Future Security Improvements
 
 ### High Priority (Next Phase)
-1. Remove/replace console.log statements from production code
+1. Remove/replace console.log statements from client code
 2. Enforce CSRF token validation on all state-changing endpoints
-3. Add input sanitization for XSS prevention (todo text, notes, comments)
-4. Implement password reset functionality
-5. Add email verification on registration
+3. Make email verification required for full access (optional feature flag)
+4. Add failed login attempt tracking and account locking
+5. Implement admin notification for suspicious activity
 
 ### Medium Priority
 6. Create session management UI (view/revoke active sessions)
 7. Add account security features (2FA, login history)
 8. Implement persistent rate limiting (Redis/database for multi-instance)
-9. Add security event logging and monitoring
+9. Add security event logging and monitoring dashboard
 10. Create API documentation with security best practices
 
 ### Low Priority
 11. Add distributed rate limiting for multi-instance deployments
 12. Create rate limit bypass for whitelisted IPs
 13. Add monitoring/alerting for rate limit violations
-14. Implement security audit logging
+14. Implement comprehensive security audit logging
 15. Add honeypot fields for bot detection
+16. Add email notification for password changes
+17. Add email notification for new login from unknown device
 
 ## Testing Notes
 
-Rate limiting can be tested with:
+### Rate Limiting
 ```bash
 # Test auth rate limit (should block after 5 requests)
 for i in {1..10}; do
@@ -381,10 +509,25 @@ for i in {1..10}; do
 done
 ```
 
-WebSocket CORS can be tested by:
+### WebSocket CORS
 1. Setting ORIGIN=https://example.com
 2. Attempting connection from different origin
 3. Connection should be rejected
+
+### Password Reset Flow
+1. Navigate to `/forgot-password`
+2. Enter email address
+3. Check email for reset link (or check logs if SMTP not configured)
+4. Click link to `/reset-password?token=...`
+5. Enter new password (must meet strength requirements)
+6. Verify password is updated and can log in
+
+### Email Verification Flow
+1. Register new account
+2. Check email for verification link (or check logs if SMTP not configured)
+3. Click link to `/verify-email?token=...`
+4. Verify email is marked as verified
+5. Test resend verification from account settings (if logged in)
 
 ## References
 
@@ -394,7 +537,31 @@ WebSocket CORS can be tested by:
 
 ## Changelog
 
-**v1.1.0** (November 4, 2025)
+**v1.4.0** (November 5, 2025) - Phase 4
+- Added password reset functionality with SMTP email support
+- Implemented email verification system
+- Created email utility module with nodemailer
+- Added password reset and email verification token schemas
+- Created forgot-password, reset-password, and verify-email UI pages
+- Updated all configuration files with SMTP settings
+- Added automatic token cleanup (6-hour intervals)
+
+**v1.3.0** (November 5, 2025) - Phase 3
+- Implemented production logging system with sensitive data redaction
+- Added comprehensive input sanitization for XSS prevention
+- Applied sanitization to todos, notes, comments, and list names
+- Replaced console statements in critical server files
+- Added LOG_LEVEL environment variable
+
+**v1.2.0** (November 5, 2025) - Phase 2
+- Implemented RFC 5322 email validation
+- Added password strength validation (8 char min, complexity)
+- Created server-side file MIME type validation with magic numbers
+- Added security headers (CSP, HSTS, X-Frame-Options, etc.)
+- Implemented username validation
+- Created CSRF infrastructure (not enforced)
+
+**v1.1.0** (November 4, 2025) - Phase 1
 - Added WebSocket CORS protection via ORIGIN environment variable
 - Implemented rate limiting for authentication endpoints
 - Updated documentation across all config files

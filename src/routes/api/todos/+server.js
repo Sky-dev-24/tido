@@ -105,8 +105,35 @@ export async function PATCH({ request, locals }) {
     return json({ error: 'ID is required' }, { status: 400 });
   }
 
+  // Sanitize text fields in updates
+  const sanitizedUpdates = { ...updates };
+
+  // Sanitize text if present
+  if (updates.text) {
+    const textValidation = validateTodoText(updates.text);
+    if (!textValidation.isValid) {
+      return json({ error: textValidation.error }, { status: 400 });
+    }
+    sanitizedUpdates.text = sanitizeText(textValidation.value, {
+      maxLength: 1000,
+      allowNewlines: true
+    });
+  }
+
+  // Sanitize notes if present
+  if (updates.notes !== undefined) {
+    if (updates.notes === null || updates.notes === '') {
+      sanitizedUpdates.notes = null;
+    } else {
+      sanitizedUpdates.notes = sanitizeText(updates.notes, {
+        maxLength: 10000,
+        allowNewlines: true
+      });
+    }
+  }
+
   try {
-    const todo = updateTodo(id, locals.user.id, updates);
+    const todo = updateTodo(id, locals.user.id, sanitizedUpdates);
 
     if (!todo) {
       return json({ error: 'Todo not found' }, { status: 404 });

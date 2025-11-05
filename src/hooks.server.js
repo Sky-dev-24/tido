@@ -1,4 +1,9 @@
-import { getSession, cleanupOldDeletedTodos } from '$lib/db.js';
+import {
+  getSession,
+  cleanupOldDeletedTodos,
+  cleanupExpiredPasswordResetTokens,
+  cleanupExpiredEmailVerificationTokens
+} from '$lib/db.js';
 import { createLogger } from '$lib/logger.js';
 
 const logger = createLogger('Server');
@@ -15,11 +20,31 @@ setInterval(() => {
   }
 }, 60 * 60 * 1000); // Every hour
 
+// Run cleanup of expired tokens every 6 hours
+setInterval(() => {
+  try {
+    const deletedPasswordResets = cleanupExpiredPasswordResetTokens();
+    const deletedEmailVerifications = cleanupExpiredEmailVerificationTokens();
+
+    if (deletedPasswordResets > 0 || deletedEmailVerifications > 0) {
+      logger.info(`Token cleanup: ${deletedPasswordResets} password reset token(s), ${deletedEmailVerifications} email verification token(s)`);
+    }
+  } catch (error) {
+    logger.error('Error cleaning up expired tokens', error);
+  }
+}, 6 * 60 * 60 * 1000); // Every 6 hours
+
 // Run cleanup on startup
 try {
   const deleted = cleanupOldDeletedTodos();
   if (deleted > 0) {
     logger.info(`Startup cleanup: Permanently deleted ${deleted} old todo(s)`);
+  }
+
+  const deletedPasswordResets = cleanupExpiredPasswordResetTokens();
+  const deletedEmailVerifications = cleanupExpiredEmailVerificationTokens();
+  if (deletedPasswordResets > 0 || deletedEmailVerifications > 0) {
+    logger.info(`Startup token cleanup: ${deletedPasswordResets} password reset token(s), ${deletedEmailVerifications} email verification token(s)`);
   }
 } catch (error) {
   logger.error('Error during startup cleanup', error);
