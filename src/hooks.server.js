@@ -1,19 +1,29 @@
 import { getSession, cleanupOldDeletedTodos } from '$lib/db.js';
+import { createLogger } from '$lib/logger.js';
+
+const logger = createLogger('Server');
 
 // Run cleanup of old deleted todos every hour
 setInterval(() => {
   try {
     const deleted = cleanupOldDeletedTodos();
     if (deleted > 0) {
-      console.log(`[Cleanup] Permanently deleted ${deleted} old todo(s)`);
+      logger.info(`Permanently deleted ${deleted} old todo(s)`);
     }
   } catch (error) {
-    console.error('[Cleanup] Error cleaning up old deleted todos:', error);
+    logger.error('Error cleaning up old deleted todos', error);
   }
 }, 60 * 60 * 1000); // Every hour
 
 // Run cleanup on startup
-cleanupOldDeletedTodos();
+try {
+  const deleted = cleanupOldDeletedTodos();
+  if (deleted > 0) {
+    logger.info(`Startup cleanup: Permanently deleted ${deleted} old todo(s)`);
+  }
+} catch (error) {
+  logger.error('Error during startup cleanup', error);
+}
 
 export async function handle({ event, resolve }) {
   const sessionId = event.cookies.get('session');

@@ -2,6 +2,9 @@ import { json } from '@sveltejs/kit';
 import { createUser, createSession } from '$lib/db.js';
 import { applyRateLimit, RATE_LIMITS } from '$lib/rate-limit.js';
 import { validateUsername, isValidEmail, validatePassword } from '$lib/validation.js';
+import { createLogger } from '$lib/logger.js';
+
+const logger = createLogger('Auth');
 
 export async function POST({ request, cookies, getClientAddress, setHeaders }) {
   // Apply rate limiting
@@ -59,7 +62,7 @@ export async function POST({ request, cookies, getClientAddress, setHeaders }) {
     return json({ user, needsApproval: true }, { status: 201 });
 
   } catch (error) {
-    console.error('Registration error:', error);
+    logger.error('Registration error', error);
     return json({ error: error.message }, { status: 400 });
   }
 }

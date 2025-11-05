@@ -3,6 +3,10 @@
  * Uses magic numbers (file signatures) to verify actual file types
  */
 
+import { createLogger } from './logger.js';
+
+const logger = createLogger('FileValidation');
+
 // File type signatures (magic numbers) - first bytes of files
 const FILE_SIGNATURES = {
 	// Images
@@ -282,7 +286,11 @@ export function validateFileUpload(buffer, filename, clientMimeType) {
 	// Check for MIME type mismatch (if client provided one)
 	if (clientMimeType && clientMimeType !== detectedMimeType) {
 		// Log mismatch but don't fail - client MIME types are often wrong
-		console.warn(`[Security] MIME type mismatch: client sent '${clientMimeType}', detected '${detectedMimeType}' for file '${filename}'`);
+		logger.security('MIME type mismatch', {
+			clientMimeType,
+			detectedMimeType,
+			filename
+		});
 	}
 
 	return {

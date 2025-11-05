@@ -1,4 +1,7 @@
 import { Server } from 'socket.io';
+import { createLogger } from './logger.js';
+
+const logger = createLogger('WebSocket');
 
 // Use globalThis to share the WebSocket instance across all contexts (Vite dev server + SSR)
 const getGlobalIO = () => globalThis.__socketIO;
@@ -7,7 +10,7 @@ const setGlobalIO = (ioInstance) => { globalThis.__socketIO = ioInstance; };
 export function initializeWebSocket(server) {
 	const existingIO = getGlobalIO();
 	if (existingIO) {
-		console.log('WebSocket server already initialized');
+		logger.debug('WebSocket server already initialized');
 		return existingIO;
 	}
 
@@ -21,7 +24,7 @@ export function initializeWebSocket(server) {
 	});
 
 	io.on('connection', (socket) => {
-		console.log('Client connected:', socket.id);
+		logger.debug('Client connected', { socketId: socket.id });
 
 		// Handle user joining a list room
 		socket.on('join-list', (data) => {
@@ -30,7 +33,7 @@ export function initializeWebSocket(server) {
 			socket.userId = userId;
 			socket.username = username;
 			socket.currentListId = listId;
-			console.log(`Socket ${socket.id} (${username}) joined list-${listId}`);
+			logger.debug('User joined list', { socketId: socket.id, username, listId });
 
 			// Notify others that user joined
 			socket.to(`list-${listId}`).emit('user:joined', { userId, username, socketId: socket.id });
@@ -39,7 +42,7 @@ export function initializeWebSocket(server) {
 		// Handle user leaving a list room
 		socket.on('leave-list', (listId) => {
 			socket.leave(`list-${listId}`);
-			console.log(`Socket ${socket.id} left list-${listId}`);
+			logger.debug('User left list', { socketId: socket.id, listId });
 
 			// Notify others that user left
 			if (socket.userId && socket.username) {
@@ -94,7 +97,7 @@ export function initializeWebSocket(server) {
 		});
 
 		socket.on('disconnect', () => {
-			console.log('Client disconnected:', socket.id);
+			logger.debug('Client disconnected', { socketId: socket.id });
 
 			// Notify others in the same list that user disconnected
 			if (socket.currentListId && socket.userId && socket.username) {
@@ -107,7 +110,7 @@ export function initializeWebSocket(server) {
 	});
 
 	setGlobalIO(io);
-	console.log('WebSocket server initialized and stored globally');
+	logger.info('WebSocket server initialized and stored globally');
 	return io;
 }
 
@@ -123,38 +126,39 @@ export function getIO() {
 export function emitTodoUpdate(listId, todo) {
 	try {
 		const ioInstance = getIO();
-		console.log(`[WebSocket] Emitting todo:updated to list-${listId}`, todo);
+		logger.debug('Emitting todo:updated', { listId, todoId: todo.id });
 		ioInstance.to(`list-${listId}`).emit('todo:updated', todo);
 	} catch (error) {
-		console.error('[WebSocket] Cannot emit todo:updated:', error.message);
+		logger.error('Cannot emit todo:updated', error);
 	}
 }
 
 export function emitTodoCreate(listId, todo) {
 	try {
 		const ioInstance = getIO();
-		console.log(`[WebSocket] Emitting todo:created to list-${listId}`, todo);
+		logger.debug('Emitting todo:created', { listId, todoId: todo.id });
 		ioInstance.to(`list-${listId}`).emit('todo:created', todo);
 	} catch (error) {
-		console.error('[WebSocket] Cannot emit todo:created:', error.message);
+		logger.error('Cannot emit todo:created', error);
 	}
 }
 
 export function emitTodoDelete(listId, todoId) {
 	try {
 		const ioInstance = getIO();
-		console.log(`[WebSocket] Emitting todo:deleted to list-${listId}`, todoId);
+		logger.debug('Emitting todo:deleted', { listId, todoId });
 		ioInstance.to(`list-${listId}`).emit('todo:deleted', { id: todoId });
 	} catch (error) {
-		console.error('[WebSocket] Cannot emit todo:deleted:', error.message);
+		logger.error('Cannot emit todo:deleted', error);
 	}
 }
 
 export function emitListUpdate(listId, list) {
 	try {
 		const ioInstance = getIO();
+		logger.debug('Emitting list:updated', { listId });
 		ioInstance.to(`list-${listId}`).emit('list:updated', list);
 	} catch (error) {
-		console.error('[WebSocket] Cannot emit list:updated:', error.message);
+		logger.error('Cannot emit list:updated', error);
 	}
 }

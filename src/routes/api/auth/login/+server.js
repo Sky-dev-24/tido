@@ -1,6 +1,9 @@
 import { json } from '@sveltejs/kit';
 import { getUserByUsername, verifyPassword, createSession } from '$lib/db.js';
 import { applyRateLimit, RATE_LIMITS } from '$lib/rate-limit.js';
+import { createLogger } from '$lib/logger.js';
+
+const logger = createLogger('Auth');
 
 export async function POST({ request, cookies, getClientAddress, setHeaders }) {
   // Apply rate limiting
@@ -62,7 +65,7 @@ export async function POST({ request, cookies, getClientAddress, setHeaders }) {
     });
 
   } catch (error) {
-    console.error('Login error:', error);
+    logger.error('Login error', error);
     return json({ error: 'Login failed' }, { status: 500 });
   }
 }

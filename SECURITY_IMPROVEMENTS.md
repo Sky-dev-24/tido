@@ -189,6 +189,78 @@ form-action 'self'
 - Update frontend to include `x-csrf-token` header
 - Enforce validation in API endpoints
 
+### 9. Production-Safe Logging System (HIGH)
+**Date:** November 5, 2025
+**Issue:** 135+ console.log statements leaked sensitive information in production
+**Risk:** Information disclosure, performance impact, security context leakage
+
+**Fix:**
+- Created `src/lib/logger.js` with conditional logging based on environment
+- Implemented log levels: ERROR, WARN, INFO, DEBUG
+- Added automatic sanitization of sensitive fields (password, token, session, etc.)
+- Replaced console statements in critical files:
+  - `src/lib/websocket.server.js` - WebSocket connections and events
+  - `src/hooks.server.js` - Server startup and cleanup
+  - `src/routes/api/auth/login/+server.js` - Authentication
+  - `src/routes/api/auth/register/+server.js` - Registration
+  - `src/routes/api/todos/+server.js` - Todo operations
+  - `src/routes/api/todos/attachments/+server.js` - File uploads
+  - `src/lib/file-validation.js` - Security events
+
+**Logging Levels:**
+- **ERROR**: Always logged (errors only)
+- **WARN**: Warnings and errors (default in production)
+- **INFO**: Informational messages, warnings, errors (default in production)
+- **DEBUG**: Verbose logging including debug info (default in development)
+
+**Features:**
+- Automatic sensitive data redaction (passwords, tokens, sessions)
+- ISO timestamp formatting
+- Module-specific loggers with context
+- Security event logging (always logged)
+- Configurable via `LOG_LEVEL` environment variable
+
+**Configuration:**
+```bash
+# Production (recommended)
+LOG_LEVEL=INFO
+
+# Development
+LOG_LEVEL=DEBUG
+
+# Minimal logging
+LOG_LEVEL=ERROR
+```
+
+### 10. Input Sanitization for XSS Prevention (HIGH)
+**Date:** November 5, 2025
+**Issue:** User-generated content not sanitized, potential XSS attacks
+**Risk:** Cross-site scripting attacks via todo text, notes, comments
+
+**Fix:**
+- Enhanced `src/lib/validation.js` with `sanitizeText()` function
+- HTML entity encoding for special characters (< > & " ' /)
+- Applied to todo creation endpoint (`src/routes/api/todos/+server.js`)
+- Validates and sanitizes todo text before storage
+
+**Sanitization Process:**
+1. Validate text length and format
+2. Encode HTML special characters:
+   - `<` → `&lt;`
+   - `>` → `&gt;`
+   - `&` → `&amp;`
+   - `"` → `&quot;`
+   - `'` → `&#x27;`
+   - `/` → `&#x2F;`
+3. Optionally remove/preserve newlines
+4. Truncate to maximum length
+
+**Applied to:**
+- ✅ Todo text creation
+- ⚠️ Todo notes (needs implementation)
+- ⚠️ Comments (needs implementation)
+- ⚠️ List names (needs implementation)
+
 ### 9. Documentation Updates
 **Files Updated:**
 - `README.md` - Added Security Features section
@@ -255,7 +327,7 @@ Before deploying to production:
 
 ## Security Status Summary
 
-### ✅ Completed (Phase 1 & 2)
+### ✅ Completed (Phase 1, 2 & 3)
 1. ✅ WebSocket CORS protection - `ORIGIN` environment variable
 2. ✅ Rate limiting - Auth endpoints (5 req/min)
 3. ✅ Email validation - RFC 5322 compliant
@@ -264,10 +336,13 @@ Before deploying to production:
 6. ✅ Security headers - CSP, X-Frame-Options, HSTS, etc.
 7. ✅ Username validation - Alphanumeric + underscore/hyphen
 8. ✅ CSRF infrastructure - Ready for implementation
+9. ✅ Production logging system - Sensitive data redaction, log levels
+10. ✅ Input sanitization - XSS prevention for todo text
 
 ### 🔄 In Progress / Needs Attention
-9. ⚠️ Console.log statements - 135+ instances need removal/replacement
-10. ⚠️ CSRF enforcement - Infrastructure ready but not enforced yet
+11. ⚠️ Console.log statements - Critical files updated, ~100 remain in client code
+12. ⚠️ CSRF enforcement - Infrastructure ready but not enforced yet
+13. ⚠️ Sanitization - Todo notes, comments, list names need implementation
 
 ### 📋 Future Security Improvements
 

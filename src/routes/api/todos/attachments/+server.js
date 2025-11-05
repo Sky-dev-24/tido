@@ -1,11 +1,13 @@
 import { json } from '@sveltejs/kit';
 import { createTaskAttachment } from '$lib/db.js';
 import { validateFileUpload, getExtensionFromMimeType } from '$lib/file-validation.js';
+import { createLogger } from '$lib/logger.js';
 import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { writeFile, unlink } from 'fs/promises';
 import crypto from 'crypto';
 
+const logger = createLogger('FileUpload');
 const UPLOAD_DIR = join(process.cwd(), 'uploads');
 
 function ensureUploadDir() {
@@ -80,7 +82,7 @@ export async function POST({ request, locals }) {
       return json({ error: 'Todo not found or access denied' }, { status: 404 });
     }
 
-    console.error('Attachment upload failed:', error);
+    logger.error('Attachment upload failed', error);
     return json({ error: 'Failed to upload attachment' }, { status: 500 });
   }
 }
