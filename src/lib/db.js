@@ -122,6 +122,38 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_todo_comments_user ON todo_comments(user_id);
 `);
 
+// Password reset tokens table
+db.exec(`
+  CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    token TEXT UNIQUE NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token);
+  CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
+`);
+
+// Email verification tokens table
+db.exec(`
+  CREATE TABLE IF NOT EXISTS email_verification_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    token TEXT UNIQUE NOT NULL,
+    expires_at TEXT NOT NULL,
+    verified_at TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_token ON email_verification_tokens(token);
+  CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user ON email_verification_tokens(user_id);
+`);
+
 function ensureTodoColumn(name, definition) {
   const columns = db.prepare('PRAGMA table_info(todos)').all();
   const hasColumn = columns.some((column) => column.name === name);
@@ -159,6 +191,7 @@ ensureUserColumn('default_task_due_offset_days', 'INTEGER DEFAULT 0');
 ensureUserColumn('default_task_reminder_minutes', 'INTEGER');
 ensureUserColumn('auto_archive_days', 'INTEGER DEFAULT 0');
 ensureUserColumn('week_start_day', "TEXT DEFAULT 'sunday'");
+ensureUserColumn('email_verified', 'INTEGER DEFAULT 0');
 
 function ensureListColumn(name, definition) {
   const columns = db.prepare('PRAGMA table_info(lists)').all();
@@ -1725,6 +1758,215 @@ export function deleteComment(commentId, userId) {
 
   db.prepare('DELETE FROM todo_comments WHERE id = ?').run(commentId);
   return true;
+}
+
+// ==================== Password Reset Functions ====================
+
+/**
+ * Create a password reset token for a user
+ * @param {number} userId - User ID
+ * @returns {string} Reset token
+ */
+export function createPasswordResetToken(userId) {
+  // Generate a secure random token
+  const token = crypto.randomBytes(32).toString('hex');
+
+  // Token expires in 1 hour
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+  // Invalidate any existing unused tokens for this user
+  db.prepare(`
+    UPDATE password_reset_tokens
+    SET used_at = CURRENT_TIMESTAMP
+    WHERE user_id = ? AND used_at IS NULL
+  `).run(userId);
+
+  // Create new token
+  db.prepare(`
+    INSERT INTO password_reset_tokens (user_id, token, expires_at)
+    VALUES (?, ?, ?)
+  `).run(userId, token, expiresAt);
+
+  return token;
+}
+
+/**
+ * Validate and retrieve password reset token
+ * @param {string} token - Reset token
+ * @returns {Object|null} Token data or null if invalid
+ */
+export function getPasswordResetToken(token) {
+  const tokenData = db.prepare(`
+    SELECT * FROM password_reset_tokens
+    WHERE token = ? AND used_at IS NULL
+  `).get(token);
+
+  if (!tokenData) {
+    return null;
+  }
+
+  // Check if token has expired
+  const now = new Date();
+  const expiresAt = new Date(tokenData.expires_at);
+
+  if (now > expiresAt) {
+    return null;
+  }
+
+  return tokenData;
+}
+
+/**
+ * Mark password reset token as used
+ * @param {string} token - Reset token
+ */
+export function markPasswordResetTokenUsed(token) {
+  db.prepare(`
+    UPDATE password_reset_tokens
+    SET used_at = CURRENT_TIMESTAMP
+    WHERE token = ?
+  `).run(token);
+}
+
+/**
+ * Update user password (used for password reset)
+ * @param {number} userId - User ID
+ * @param {string} newPassword - New plain text password
+ */
+export function updateUserPassword(userId, newPassword) {
+  const hashedPassword = bcrypt.hashSync(newPassword, 10);
+  db.prepare(`
+    UPDATE users
+    SET password_hash = ?
+    WHERE id = ?
+  `).run(hashedPassword, userId);
+}
+
+/**
+ * Get user by email
+ * @param {string} email - Email address
+ * @returns {Object|null} User object or null
+ */
+export function getUserByEmail(email) {
+  return db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+}
+
+/**
+ * Clean up expired password reset tokens
+ */
+export function cleanupExpiredPasswordResetTokens() {
+  const now = new Date().toISOString();
+  const result = db.prepare(`
+    DELETE FROM password_reset_tokens
+    WHERE expires_at < ? OR used_at IS NOT NULL
+  `).run(now);
+  return result.changes;
+}
+
+// ==================== Email Verification Functions ====================
+
+/**
+ * Create an email verification token for a user
+ * @param {number} userId - User ID
+ * @returns {string} Verification token
+ */
+export function createEmailVerificationToken(userId) {
+  // Generate a secure random token
+  const token = crypto.randomBytes(32).toString('hex');
+
+  // Token expires in 24 hours
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+  // Invalidate any existing unverified tokens for this user
+  db.prepare(`
+    DELETE FROM email_verification_tokens
+    WHERE user_id = ? AND verified_at IS NULL
+  `).run(userId);
+
+  // Create new token
+  db.prepare(`
+    INSERT INTO email_verification_tokens (user_id, token, expires_at)
+    VALUES (?, ?, ?)
+  `).run(userId, token, expiresAt);
+
+  return token;
+}
+
+/**
+ * Validate and retrieve email verification token
+ * @param {string} token - Verification token
+ * @returns {Object|null} Token data or null if invalid
+ */
+export function getEmailVerificationToken(token) {
+  const tokenData = db.prepare(`
+    SELECT * FROM email_verification_tokens
+    WHERE token = ? AND verified_at IS NULL
+  `).get(token);
+
+  if (!tokenData) {
+    return null;
+  }
+
+  // Check if token has expired
+  const now = new Date();
+  const expiresAt = new Date(tokenData.expires_at);
+
+  if (now > expiresAt) {
+    return null;
+  }
+
+  return tokenData;
+}
+
+/**
+ * Mark email as verified
+ * @param {string} token - Verification token
+ * @returns {boolean} Success status
+ */
+export function verifyEmail(token) {
+  const tokenData = getEmailVerificationToken(token);
+
+  if (!tokenData) {
+    return false;
+  }
+
+  // Mark token as verified
+  db.prepare(`
+    UPDATE email_verification_tokens
+    SET verified_at = CURRENT_TIMESTAMP
+    WHERE token = ?
+  `).run(token);
+
+  // Mark user's email as verified
+  db.prepare(`
+    UPDATE users
+    SET email_verified = 1
+    WHERE id = ?
+  `).run(tokenData.user_id);
+
+  return true;
+}
+
+/**
+ * Check if user's email is verified
+ * @param {number} userId - User ID
+ * @returns {boolean}
+ */
+export function isEmailVerified(userId) {
+  const user = db.prepare('SELECT email_verified FROM users WHERE id = ?').get(userId);
+  return user?.email_verified === 1;
+}
+
+/**
+ * Clean up expired email verification tokens
+ */
+export function cleanupExpiredEmailVerificationTokens() {
+  const now = new Date().toISOString();
+  const result = db.prepare(`
+    DELETE FROM email_verification_tokens
+    WHERE expires_at < ? OR verified_at IS NOT NULL
+  `).run(now);
+  return result.changes;
 }
 
 export default db;

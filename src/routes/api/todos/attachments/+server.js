@@ -1,11 +1,13 @@
 import { json } from '@sveltejs/kit';
 import { createTaskAttachment } from '$lib/db.js';
+import { validateFileUpload, getExtensionFromMimeType } from '$lib/file-validation.js';
+import { createLogger } from '$lib/logger.js';
 import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { writeFile, unlink } from 'fs/promises';
 import crypto from 'crypto';
 
-const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB limit for now
+const logger = createLogger('FileUpload');
 const UPLOAD_DIR = join(process.cwd(), 'uploads');
 
 function ensureUploadDir() {
@@ -44,20 +46,21 @@ export async function POST({ request, locals }) {
     return json({ error: 'No file uploaded' }, { status: 400 });
   }
 
-  if (file.size === 0) {
-    return json({ error: 'Uploaded file is empty' }, { status: 400 });
-  }
-
-  if (file.size > MAX_FILE_SIZE_BYTES) {
-    return json({ error: 'File exceeds maximum size of 10 MB' }, { status: 413 });
-  }
-
   ensureUploadDir();
 
+  // Read file buffer
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
-  const extension = file.name.includes('.') ? `.${file.name.split('.').pop()}` : '';
+  // Validate file with server-side MIME type detection
+  const validation = validateFileUpload(buffer, file.name, file.type);
+  if (!validation.isValid) {
+    return json({ error: validation.error }, { status: 400 });
+  }
+
+  // Use detected MIME type and generate safe filename with correct extension
+  const detectedMimeType = validation.mimeType;
+  const extension = getExtensionFromMimeType(detectedMimeType) || '';
   const storedName = `${crypto.randomUUID()}${extension}`;
   const filePath = join(UPLOAD_DIR, storedName);
 
@@ -67,7 +70,7 @@ export async function POST({ request, locals }) {
     const attachment = createTaskAttachment(todoId, locals.user.id, {
       original_name: file.name,
       stored_name: storedName,
-      mime_type: file.type || null,
+      mime_type: detectedMimeType, // Use detected MIME type, not client-provided
       size: buffer.length
     });
 
@@ -79,7 +82,7 @@ export async function POST({ request, locals }) {
       return json({ error: 'Todo not found or access denied' }, { status: 404 });
     }
 
-    console.error('Attachment upload failed:', error);
+    logger.error('Attachment upload failed', error);
     return json({ error: 'Failed to upload attachment' }, { status: 500 });
   }
 }

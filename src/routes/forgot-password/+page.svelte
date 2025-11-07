@@ -1,32 +1,26 @@
 <script>
-	import { goto } from '$app/navigation';
-
-	let username = $state('');
-	let password = $state('');
+	let email = $state('');
 	let error = $state('');
+	let success = $state(false);
 	let loading = $state(false);
 
-	async function handleLogin() {
+	async function handleSubmit() {
 		error = '';
 		loading = true;
 
 		try {
-			const response = await fetch('/api/auth/login', {
+			const response = await fetch('/api/auth/request-password-reset', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ username, password })
+				body: JSON.stringify({ email })
 			});
 
 			const data = await response.json();
 
 			if (response.ok) {
-				goto('/');
+				success = true;
 			} else {
-				if (data.pending) {
-					error = 'Your account is awaiting admin approval. Please check back later.';
-				} else {
-					error = data.error || 'Login failed';
-				}
+				error = data.error || 'Failed to send password reset email';
 			}
 		} catch (err) {
 			error = 'An error occurred. Please try again.';
@@ -37,60 +31,54 @@
 
 	function handleKeyPress(event) {
 		if (event.key === 'Enter') {
-			handleLogin();
+			handleSubmit();
 		}
 	}
 </script>
 
 <svelte:head>
-	<title>Login - Tido</title>
+	<title>Forgot Password - Tido</title>
 </svelte:head>
 
 <div class="auth-container">
 	<div class="auth-card">
-		<h1>Welcome Back</h1>
-		<p class="subtitle">Sign in to Tido</p>
+		<h1>Forgot Password</h1>
+		<p class="subtitle">Enter your email address to receive a password reset link</p>
 
-		{#if error}
-			<div class="error-message">{error}</div>
+		{#if success}
+			<div class="success-message">
+				<p><strong>Email sent!</strong></p>
+				<p>If an account with that email exists, we've sent a password reset link. Please check your inbox.</p>
+				<p class="back-link"><a href="/login">Back to login</a></p>
+			</div>
+		{:else}
+			{#if error}
+				<div class="error-message">{error}</div>
+			{/if}
+
+			<form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
+				<div class="form-group">
+					<label for="email">Email Address</label>
+					<input
+						id="email"
+						type="email"
+						bind:value={email}
+						onkeypress={handleKeyPress}
+						placeholder="Enter your email"
+						disabled={loading}
+						required
+					/>
+				</div>
+
+				<button type="submit" class="btn-primary" disabled={loading}>
+					{loading ? 'Sending...' : 'Send Reset Link'}
+				</button>
+			</form>
+
+			<p class="switch-auth">
+				Remember your password? <a href="/login">Sign in</a>
+			</p>
 		{/if}
-
-		<form onsubmit={(e) => { e.preventDefault(); handleLogin(); }}>
-			<div class="form-group">
-				<label for="username">Username</label>
-				<input
-					id="username"
-					type="text"
-					bind:value={username}
-					onkeypress={handleKeyPress}
-					placeholder="Enter your username"
-					disabled={loading}
-					required
-				/>
-			</div>
-
-			<div class="form-group">
-				<label for="password">Password</label>
-				<input
-					id="password"
-					type="password"
-					bind:value={password}
-					onkeypress={handleKeyPress}
-					placeholder="Enter your password"
-					disabled={loading}
-					required
-				/>
-				<p class="forgot-password"><a href="/forgot-password">Forgot password?</a></p>
-			</div>
-
-			<button type="submit" class="btn-primary" disabled={loading}>
-				{loading ? 'Signing in...' : 'Sign In'}
-			</button>
-		</form>
-
-		<p class="switch-auth">
-			Don't have an account? <a href="/register">Sign up</a>
-		</p>
 	</div>
 </div>
 
@@ -143,6 +131,41 @@
 		font-size: 0.9rem;
 	}
 
+	.success-message {
+		background-color: #e8f5e9;
+		color: #2e7d32;
+		padding: 1rem;
+		border-radius: 4px;
+		font-size: 0.9rem;
+	}
+
+	.success-message p {
+		margin: 0 0 0.75rem 0;
+	}
+
+	.success-message p:last-child {
+		margin-bottom: 0;
+	}
+
+	.success-message strong {
+		font-size: 1.1rem;
+	}
+
+	.back-link {
+		margin-top: 1rem;
+		text-align: center;
+	}
+
+	.back-link a {
+		color: #2e7d32;
+		text-decoration: none;
+		font-weight: 600;
+	}
+
+	.back-link a:hover {
+		text-decoration: underline;
+	}
+
 	.form-group {
 		margin-bottom: 1.5rem;
 	}
@@ -152,21 +175,6 @@
 		margin-bottom: 0.5rem;
 		color: #2c3e50;
 		font-weight: 500;
-	}
-
-	.forgot-password {
-		text-align: right;
-		margin: 0.5rem 0 0 0;
-		font-size: 0.9rem;
-	}
-
-	.forgot-password a {
-		color: #667eea;
-		text-decoration: none;
-	}
-
-	.forgot-password a:hover {
-		text-decoration: underline;
 	}
 
 	input {

@@ -1,5 +1,9 @@
 import { json } from '@sveltejs/kit';
 import { updateComment, deleteComment } from '$lib/db.js';
+import { sanitizeText } from '$lib/validation.js';
+import { createLogger } from '$lib/logger.js';
+
+const logger = createLogger('CommentsAPI');
 
 // PATCH - Update a comment
 export async function PATCH({ params, request, locals }) {
@@ -16,11 +20,22 @@ export async function PATCH({ params, request, locals }) {
 			return json({ error: 'Comment text is required' }, { status: 400 });
 		}
 
-		const comment = updateComment(parseInt(params.id), user.id, commentText.trim());
+		// Validate comment length
+		if (commentText.trim().length > 5000) {
+			return json({ error: 'Comment must be less than 5000 characters' }, { status: 400 });
+		}
+
+		// Sanitize comment text
+		const sanitizedComment = sanitizeText(commentText.trim(), {
+			maxLength: 5000,
+			allowNewlines: true
+		});
+
+		const comment = updateComment(parseInt(params.id), user.id, sanitizedComment);
 
 		return json({ comment });
 	} catch (error) {
-		console.error('Error updating comment:', error);
+		logger.error('Error updating comment', error);
 		return json({ error: error.message }, { status: error.message === 'Access denied' ? 403 : 500 });
 	}
 }
@@ -38,7 +53,7 @@ export async function DELETE({ params, locals }) {
 
 		return json({ success: true });
 	} catch (error) {
-		console.error('Error deleting comment:', error);
+		logger.error('Error deleting comment', error);
 		return json({ error: error.message }, { status: error.message === 'Access denied' ? 403 : 500 });
 	}
 }

@@ -1,19 +1,54 @@
-import { getSession, cleanupOldDeletedTodos } from '$lib/db.js';
+import {
+  getSession,
+  cleanupOldDeletedTodos,
+  cleanupExpiredPasswordResetTokens,
+  cleanupExpiredEmailVerificationTokens
+} from '$lib/db.js';
+import { createLogger } from '$lib/logger.js';
+
+const logger = createLogger('Server');
 
 // Run cleanup of old deleted todos every hour
 setInterval(() => {
   try {
     const deleted = cleanupOldDeletedTodos();
     if (deleted > 0) {
-      console.log(`[Cleanup] Permanently deleted ${deleted} old todo(s)`);
+      logger.info(`Permanently deleted ${deleted} old todo(s)`);
     }
   } catch (error) {
-    console.error('[Cleanup] Error cleaning up old deleted todos:', error);
+    logger.error('Error cleaning up old deleted todos', error);
   }
 }, 60 * 60 * 1000); // Every hour
 
+// Run cleanup of expired tokens every 6 hours
+setInterval(() => {
+  try {
+    const deletedPasswordResets = cleanupExpiredPasswordResetTokens();
+    const deletedEmailVerifications = cleanupExpiredEmailVerificationTokens();
+
+    if (deletedPasswordResets > 0 || deletedEmailVerifications > 0) {
+      logger.info(`Token cleanup: ${deletedPasswordResets} password reset token(s), ${deletedEmailVerifications} email verification token(s)`);
+    }
+  } catch (error) {
+    logger.error('Error cleaning up expired tokens', error);
+  }
+}, 6 * 60 * 60 * 1000); // Every 6 hours
+
 // Run cleanup on startup
-cleanupOldDeletedTodos();
+try {
+  const deleted = cleanupOldDeletedTodos();
+  if (deleted > 0) {
+    logger.info(`Startup cleanup: Permanently deleted ${deleted} old todo(s)`);
+  }
+
+  const deletedPasswordResets = cleanupExpiredPasswordResetTokens();
+  const deletedEmailVerifications = cleanupExpiredEmailVerificationTokens();
+  if (deletedPasswordResets > 0 || deletedEmailVerifications > 0) {
+    logger.info(`Startup token cleanup: ${deletedPasswordResets} password reset token(s), ${deletedEmailVerifications} email verification token(s)`);
+  }
+} catch (error) {
+  logger.error('Error during startup cleanup', error);
+}
 
 export async function handle({ event, resolve }) {
   const sessionId = event.cookies.get('session');
@@ -44,5 +79,34 @@ export async function handle({ event, resolve }) {
     }
   }
 
-  return resolve(event);
+  const response = await resolve(event);
+
+  // Add security headers to all responses
+  response.headers.set('X-Frame-Options', 'DENY');
+  response.headers.set('X-Content-Type-Options', 'nosniff');
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  response.headers.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+
+  // Add HSTS only if using HTTPS (check if not explicitly disabled)
+  if (process.env.COOKIE_SECURE !== 'false' && process.env.NODE_ENV === 'production') {
+    response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+
+  // Content Security Policy
+  // Note: This is a balanced CSP that allows the app to function while providing security
+  const cspDirectives = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'", // 'unsafe-inline' needed for Svelte
+    "style-src 'self' 'unsafe-inline'",  // 'unsafe-inline' needed for dynamic styles
+    "img-src 'self' data: blob:",        // Allow data URIs for images
+    "font-src 'self' data:",
+    "connect-src 'self' ws: wss:",       // Allow WebSocket connections
+    "frame-ancestors 'none'",            // Equivalent to X-Frame-Options: DENY
+    "base-uri 'self'",
+    "form-action 'self'"
+  ].join('; ');
+
+  response.headers.set('Content-Security-Policy', cspDirectives);
+
+  return response;
 }

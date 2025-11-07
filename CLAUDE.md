@@ -12,7 +12,97 @@ Tido is a modern, real-time collaborative task management application built with
 - **Backend**: SvelteKit with adapter-node for production deployment
 - **Database**: SQLite with better-sqlite3 (configurable path via `DB_PATH` environment variable)
 - **Real-time**: Socket.io for WebSocket communication
-- **Authentication**: Session-based with bcrypt password hashing
+- **Authentication**: Session-based with bcrypt password hashing, password reset, email verification
+- **Email**: SMTP email support via nodemailer (Gmail, Outlook, SendGrid, etc.)
+- **Security**: Rate limiting, CORS protection, input sanitization, XSS prevention, SQL injection prevention
+
+## Security Features
+
+### Rate Limiting (`src/lib/rate-limit.js`)
+
+The application implements a sliding window rate limiter with three presets:
+- **AUTH**: 5 requests/minute for authentication endpoints (login, register)
+- **API**: 30 requests/minute for general API operations
+- **READ**: 100 requests/minute for read operations
+
+Rate limiting is applied via the `applyRateLimit()` helper function in API routes. The limiter:
+- Uses IP address as identifier (supports x-forwarded-for and x-real-ip headers)
+- Returns 429 status with Retry-After header when limit exceeded
+- Automatically cleans up old entries every 5 minutes
+- Adds X-RateLimit-* headers to responses
+
+### WebSocket CORS Protection
+
+WebSocket connections are restricted to the origin specified in the `ORIGIN` environment variable:
+- **Production**: MUST set `ORIGIN=https://yourdomain.com` to prevent unauthorized connections
+- **Development**: Leave unset or set to `false` to allow all origins
+- **Configuration**: `src/lib/websocket.server.js` reads `process.env.ORIGIN`
+
+### Additional Security Measures
+
+- **Session Security**: httpOnly, sameSite='strict' cookies with 7-day expiration
+- **Password Security**: bcrypt hashing with cost factor 10, 8 character minimum with complexity requirements
+- **Password Reset**: Token-based reset with 1-hour expiration, email enumeration protection
+- **Email Verification**: Optional verification on registration with 24-hour token expiration
+- **Input Sanitization**: HTML entity encoding for all user-generated content (todos, notes, comments, list names)
+- **File Upload Security**: Server-side MIME type detection using magic numbers, blocks executables
+- **Security Headers**: CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy
+- **Production Logging**: Automatic sensitive data redaction in logs (`src/lib/logger.js`)
+- **SQL Injection**: All queries use parameterized statements via better-sqlite3
+- **Permission Checks**: All database operations verify user access via `list_members` table
+- **Automatic Cleanup**: Expired tokens, sessions, and soft-deleted items cleaned up automatically
+
+## Email System (`src/lib/email.js`)
+
+The application includes optional SMTP email functionality for password reset and email verification:
+
+### Configuration
+
+Email is **optional** - the app functions normally without it. Configure via environment variables:
+- `SMTP_HOST`: SMTP server hostname (e.g., smtp.gmail.com)
+- `SMTP_PORT`: SMTP port (default: 587)
+- `SMTP_SECURE`: true for port 465, false for other ports
+- `SMTP_USER`: SMTP username/email
+- `SMTP_PASS`: SMTP password or app-specific password
+- `SMTP_FROM`: Sender email address
+
+### Supported Providers
+
+Pre-configured examples for:
+- **Gmail**: Use App Password (not regular password)
+- **Outlook**: Standard SMTP
+- **SendGrid**: API key authentication
+
+### Email Functions
+
+- `sendPasswordResetEmail(email, username, resetToken, baseUrl)` - Send password reset link
+- `sendEmailVerification(email, username, verificationToken, baseUrl)` - Send email verification
+- `sendApprovalNotification(email, username, baseUrl)` - Notify user when admin approves account
+- `verifyEmailConfig()` - Test SMTP configuration
+
+### Behavior Without SMTP
+
+If SMTP is not configured:
+- Emails are logged to console instead of sent
+- Token links appear in server logs for testing
+- All functionality works normally (tokens still generated and validated)
+- Useful for development and testing
+
+### Password Reset Flow
+
+1. User requests reset at `/forgot-password`
+2. Token generated (32 bytes, 1-hour expiry)
+3. Email sent with reset link to `/reset-password?token=...`
+4. User enters new password (validated for strength)
+5. Token marked as used, password updated
+
+### Email Verification Flow
+
+1. Verification email sent automatically on registration
+2. Token generated (32 bytes, 24-hour expiry)
+3. Email sent with verification link to `/verify-email?token=...`
+4. User clicks link, email marked as verified
+5. User can resend verification from `/api/auth/resend-verification`
 
 ## Development Commands
 
@@ -55,7 +145,7 @@ docker build -t tido .
 
 The database module is the heart of the application, managing all data operations:
 
-- **Schema**: Defines 6 core tables (users, sessions, lists, list_members, list_invitations, todos) plus supporting tables (task_attachments, todo_comments)
+- **Schema**: Defines 6 core tables (users, sessions, lists, list_members, list_invitations, todos) plus supporting tables (task_attachments, todo_comments, password_reset_tokens, email_verification_tokens)
 - **Dynamic columns**: Uses `ensureTodoColumn()`, `ensureUserColumn()`, `ensureListColumn()` for backward-compatible schema migrations
 - **Soft deletes**: Todos use `deleted_at` timestamp for 7-day retention before permanent deletion
 - **Auto-archiving**: Completed todos can be auto-archived based on user preferences (`auto_archive_days`)

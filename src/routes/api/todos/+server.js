@@ -7,9 +7,12 @@ import db, {
   getAttachmentFilesForTodo
 } from '$lib/db.js';
 import { emitTodoCreate, emitTodoUpdate, emitTodoDelete, getIO } from '$lib/websocket.server.js';
+import { validateTodoText, sanitizeText } from '$lib/validation.js';
+import { createLogger } from '$lib/logger.js';
 import { join } from 'path';
 import { unlink } from 'fs/promises';
 
+const logger = createLogger('TodosAPI');
 const UPLOAD_DIR = join(process.cwd(), 'uploads');
 
 export async function GET({ url, locals }) {
@@ -30,7 +33,7 @@ export async function GET({ url, locals }) {
     if (error.message === 'Access denied to this list') {
       return json({ error: 'Access denied to this list' }, { status: 403 });
     }
-    console.error('Error fetching todos:', error);
+    logger.error('Error fetching todos', error);
     return json({ error: 'Failed to fetch todos' }, { status: 500 });
   }
 }
@@ -47,15 +50,23 @@ export async function POST({ request, locals }) {
     return json({ error: 'List ID is required' }, { status: 400 });
   }
 
-  if (!text || !text.trim()) {
-    return json({ error: 'Text is required' }, { status: 400 });
+  // Validate todo text
+  const textValidation = validateTodoText(text);
+  if (!textValidation.isValid) {
+    return json({ error: textValidation.error }, { status: 400 });
   }
+
+  // Sanitize text input
+  const sanitizedText = sanitizeText(textValidation.value, {
+    maxLength: 1000,
+    allowNewlines: true
+  });
 
   try {
     const todo = createTodo(
       parseInt(listId),
       locals.user.id,
-      text.trim(),
+      sanitizedText,
       isRecurring,
       recurrencePattern,
       dueDate ?? null,
@@ -64,9 +75,8 @@ export async function POST({ request, locals }) {
       parentId !== undefined && parentId !== null ? parseInt(parentId) : null,
       assignedTo ?? null
     );
-    console.log('[API] Todo created, about to emit WebSocket event for list', parseInt(listId));
+    logger.debug('Todo created', { listId: parseInt(listId), todoId: todo.id });
     emitTodoCreate(parseInt(listId), todo);
-    console.log('[API] WebSocket event emitted');
     return json(todo, { status: 201 });
   } catch (error) {
     if (error.message === 'Access denied to this list') {
@@ -78,7 +88,7 @@ export async function POST({ request, locals }) {
     if (error.message === 'Assignee must be a list member' || error.message === 'Invalid assignee id') {
       return json({ error: error.message }, { status: 400 });
     }
-    console.error('Error creating todo:', error);
+    logger.error('Error creating todo', error);
     return json({ error: 'Failed to create todo' }, { status: 500 });
   }
 }
@@ -95,8 +105,35 @@ export async function PATCH({ request, locals }) {
     return json({ error: 'ID is required' }, { status: 400 });
   }
 
+  // Sanitize text fields in updates
+  const sanitizedUpdates = { ...updates };
+
+  // Sanitize text if present
+  if (updates.text) {
+    const textValidation = validateTodoText(updates.text);
+    if (!textValidation.isValid) {
+      return json({ error: textValidation.error }, { status: 400 });
+    }
+    sanitizedUpdates.text = sanitizeText(textValidation.value, {
+      maxLength: 1000,
+      allowNewlines: true
+    });
+  }
+
+  // Sanitize notes if present
+  if (updates.notes !== undefined) {
+    if (updates.notes === null || updates.notes === '') {
+      sanitizedUpdates.notes = null;
+    } else {
+      sanitizedUpdates.notes = sanitizeText(updates.notes, {
+        maxLength: 10000,
+        allowNewlines: true
+      });
+    }
+  }
+
   try {
-    const todo = updateTodo(id, locals.user.id, updates);
+    const todo = updateTodo(id, locals.user.id, sanitizedUpdates);
 
     if (!todo) {
       return json({ error: 'Todo not found' }, { status: 404 });
@@ -111,7 +148,7 @@ export async function PATCH({ request, locals }) {
     if (error.message === 'Assignee must be a list member' || error.message === 'Invalid assignee id') {
       return json({ error: error.message }, { status: 400 });
     }
-    console.error('Error updating todo:', error);
+    logger.error('Error updating todo', error);
     return json({ error: 'Failed to update todo' }, { status: 500 });
   }
 }

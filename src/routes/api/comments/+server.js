@@ -1,5 +1,9 @@
 import { json } from '@sveltejs/kit';
 import { createComment, getCommentsForTodo } from '$lib/db.js';
+import { sanitizeText } from '$lib/validation.js';
+import { createLogger } from '$lib/logger.js';
+
+const logger = createLogger('CommentsAPI');
 
 // GET - Fetch all comments for a todo
 export async function GET({ url, locals }) {
@@ -19,7 +23,7 @@ export async function GET({ url, locals }) {
 		const comments = getCommentsForTodo(parseInt(todoId), user.id);
 		return json({ comments });
 	} catch (error) {
-		console.error('Error fetching comments:', error);
+		logger.error('Error fetching comments', error);
 		return json({ error: error.message }, { status: 500 });
 	}
 }
@@ -39,14 +43,25 @@ export async function POST({ request, locals }) {
 			return json({ error: 'Todo ID and comment text are required' }, { status: 400 });
 		}
 
-		const comment = createComment(parseInt(todoId), user.id, commentText.trim());
+		// Validate comment length
+		if (commentText.trim().length > 5000) {
+			return json({ error: 'Comment must be less than 5000 characters' }, { status: 400 });
+		}
+
+		// Sanitize comment text
+		const sanitizedComment = sanitizeText(commentText.trim(), {
+			maxLength: 5000,
+			allowNewlines: true
+		});
+
+		const comment = createComment(parseInt(todoId), user.id, sanitizedComment);
 
 		// Add username to the returned comment
 		comment.username = user.username;
 
 		return json({ comment }, { status: 201 });
 	} catch (error) {
-		console.error('Error creating comment:', error);
+		logger.error('Error creating comment', error);
 		return json({ error: error.message }, { status: 500 });
 	}
 }

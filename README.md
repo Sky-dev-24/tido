@@ -9,6 +9,7 @@ A modern, real-time collaborative task management application built with SvelteK
 - 📋 Multiple lists with personal and shared options
 - 🔄 Real-time collaboration with WebSocket support
 - 👥 User authentication and authorization
+- 🔐 Password reset and email verification
 - 📝 Rich task details with notes and attachments
 - 🗑️ Soft-delete with "Recently Deleted" recovery (7-day retention)
 
@@ -111,9 +112,93 @@ Copy `.env.example` to `.env` and configure as needed:
 cp .env.example .env
 ```
 
-Environment variables:
-- `NODE_ENV`: Set to `production` for production deployment
+### Required Environment Variables
+
+- `NODE_ENV`: Set to `production` for production deployment (default: development)
 - `PORT`: Port to run the server on (default: 3000)
+- `ORIGIN`: **[SECURITY - REQUIRED FOR PRODUCTION]** Set to your application's URL for WebSocket CORS protection
+  - Example: `https://yourdomain.com` or `http://192.168.1.100:3000`
+  - Leave unset for development to allow all origins
+- `COOKIE_SECURE`: Set to `false` for HTTP (development), automatically `true` for HTTPS in production
+
+### Optional Environment Variables
+
+#### Email Configuration (SMTP)
+Configure these to enable password reset and email verification features. If not set, the app will function normally but email features will be disabled (emails logged to console instead).
+
+- `SMTP_HOST`: SMTP server hostname (e.g., `smtp.gmail.com`)
+- `SMTP_PORT`: SMTP server port (default: 587)
+- `SMTP_SECURE`: Use SSL/TLS (true for port 465, false for other ports)
+- `SMTP_USER`: SMTP username/email
+- `SMTP_PASS`: SMTP password or app-specific password
+- `SMTP_FROM`: Sender email address (e.g., `noreply@yourdomain.com`)
+
+**Example Gmail Configuration:**
+```bash
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password  # Use App Password, not regular password
+SMTP_FROM=your-email@gmail.com
+```
+
+**Example SendGrid Configuration:**
+```bash
+SMTP_HOST=smtp.sendgrid.net
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=apikey
+SMTP_PASS=your-sendgrid-api-key
+SMTP_FROM=noreply@yourdomain.com
+```
+
+#### Logging
+- `LOG_LEVEL`: Set logging level (default: INFO in production, DEBUG in development)
+  - Options: `ERROR`, `WARN`, `INFO`, `DEBUG`
+
+#### Database
+- `DB_PATH`: Custom database file location (default: `src/lib/../../todos.db` in dev, `/app/data/todos.db` in Docker)
+
+## Security Features
+
+Tido includes comprehensive production-grade security protections:
+
+### Authentication & Access Control
+- **Strong Password Requirements**: Minimum 8 characters with complexity requirements (uppercase, lowercase, numbers, special characters)
+- **Password Reset**: Secure token-based password reset via email with 1-hour expiration
+- **Email Verification**: Optional email verification on registration with 24-hour token expiration
+- **Secure Sessions**: httpOnly, sameSite strict cookies with 7-day expiration
+- **Password Hashing**: bcrypt with cost factor 10
+- **User Approval System**: Admin approval required for new user registrations
+
+### Input Validation & Sanitization
+- **XSS Prevention**: All user-generated content (todos, notes, comments, list names) sanitized with HTML entity encoding
+- **Email Validation**: RFC 5322 compliant email address validation
+- **Username Validation**: Alphanumeric characters with underscore/hyphen, 3-32 character length
+- **File Upload Security**: Server-side MIME type detection using magic numbers, blocks executable files
+
+### Network Security
+- **Rate Limiting**: Multi-level rate limiting to prevent abuse
+  - Authentication endpoints: 5 requests/minute
+  - General API endpoints: 30 requests/minute
+  - Read operations: 100 requests/minute
+- **CORS Protection**: WebSocket connections restricted to configured origin only
+- **Security Headers**: CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy
+- **SQL Injection Protection**: Parameterized queries throughout all database operations
+
+### Production Features
+- **Production Logging**: Automatic sensitive data redaction in logs (passwords, tokens, sessions)
+- **CSRF Infrastructure**: Ready for enforcement (infrastructure in place)
+- **Automatic Cleanup**: Expired tokens and deleted items automatically cleaned up
+
+**Important Security Notes:**
+- Always set the `ORIGIN` environment variable in production to prevent unauthorized WebSocket connections
+- Use HTTPS in production and set `COOKIE_SECURE=true`
+- Configure SMTP settings for password reset functionality
+- Review `SECURITY_IMPROVEMENTS.md` for detailed security documentation
+
+See [SECURITY_IMPROVEMENTS.md](./SECURITY_IMPROVEMENTS.md) for complete security documentation.
 
 ## First Time Setup
 
