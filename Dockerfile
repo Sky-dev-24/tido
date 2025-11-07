@@ -6,11 +6,11 @@ WORKDIR /app
 # Install build dependencies for better-sqlite3
 RUN apk add --no-cache python3 make g++
 
-# Copy package files
-COPY package*.json ./
+# Copy package files and npm config
+COPY package*.json .npmrc* ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies with better error handling
+RUN npm ci --verbose || npm install
 
 # Copy source code
 COPY . .
@@ -24,13 +24,13 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Install runtime dependencies for better-sqlite3, su-exec, and curl for healthchecks
-RUN apk add --no-cache sqlite-libs su-exec shadow curl
+RUN apk add --no-cache sqlite-libs su-exec shadow curl python3 make g++
 
 # Copy package files
-COPY package*.json ./
+COPY package*.json .npmrc* ./
 
-# Install production dependencies with native rebuild
-RUN npm ci --production && \
+# Install production dependencies with native rebuild and fallback
+RUN (npm ci --production || npm install --production) && \
     npm rebuild better-sqlite3
 
 # Copy built app from builder stage
