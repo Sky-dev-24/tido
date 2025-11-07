@@ -15,8 +15,10 @@ RUN npm ci --verbose || npm install
 # Copy source code
 COPY . .
 
-# Build the app
-RUN npm run build
+# Build the app with increased memory and verbose output
+RUN echo "Starting Vite build..." && \
+    NODE_OPTIONS="--max-old-space-size=2048" npm run build 2>&1 | tee build.log || \
+    (echo "Build failed! Showing last 50 lines of output:" && tail -50 build.log && exit 1)
 
 # Production stage
 FROM node:20-alpine
