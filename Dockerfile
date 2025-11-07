@@ -53,7 +53,11 @@ set -e
 PUID=${PUID:-1000}
 PGID=${PGID:-1000}
 
-echo "Starting Tido with PUID=$PUID and PGID=$PGID"
+echo "========================================"
+echo "Starting Tido Task Manager"
+echo "========================================"
+echo "PUID: $PUID"
+echo "PGID: $PGID"
 
 # Create group if it doesn't exist
 if ! getent group $PGID > /dev/null 2>&1; then
@@ -67,16 +71,55 @@ if ! getent passwd $PUID > /dev/null 2>&1; then
     adduser -D -u $PUID -G $(getent group $PGID | cut -d: -f1) appuser
 fi
 
+# Verify volume mounts
+echo ""
+echo "Checking volume mounts..."
+echo "----------------------------------------"
+
+if mountpoint -q /app/data 2>/dev/null || [ "$(stat -c %d /app/data)" != "$(stat -c %d /app)" ]; then
+    echo "✓ /app/data appears to be a volume mount"
+else
+    echo "⚠ WARNING: /app/data does not appear to be a volume!"
+    echo "  Your database will be stored in the container and WILL BE LOST on container recreation."
+    echo "  Please configure a volume mount for /app/data in your Docker/Portainer setup."
+fi
+
+if mountpoint -q /app/uploads 2>/dev/null || [ "$(stat -c %d /app/uploads)" != "$(stat -c %d /app)" ]; then
+    echo "✓ /app/uploads appears to be a volume mount"
+else
+    echo "⚠ WARNING: /app/uploads does not appear to be a volume!"
+    echo "  Uploaded files will be stored in the container and WILL BE LOST on container recreation."
+    echo "  Please configure a volume mount for /app/uploads in your Docker/Portainer setup."
+fi
+
 # Set ownership of data directories
-echo "Setting permissions on /app/data and /app/uploads"
+echo ""
+echo "Setting permissions..."
 chown -R $PUID:$PGID /app/data /app/uploads
+echo "✓ Permissions set"
 
 # Set DB_PATH environment variable
 export DB_PATH=${DB_PATH:-/app/data/todos.db}
+echo ""
+echo "Database configuration:"
+echo "----------------------------------------"
 echo "Database path: $DB_PATH"
 
+# Check if database exists
+if [ -f "$DB_PATH" ]; then
+    DB_SIZE=$(du -h "$DB_PATH" | cut -f1)
+    echo "✓ Existing database found (size: $DB_SIZE)"
+else
+    echo "ℹ No existing database found - will create new database on first run"
+fi
+
+echo ""
+echo "========================================"
+echo "Starting Node.js application on port ${PORT:-3000}..."
+echo "========================================"
+echo ""
+
 # Switch to the specified user and run the app
-echo "Starting Node.js application..."
 exec su-exec $PUID:$PGID node server.js
 EOF
 
@@ -93,6 +136,10 @@ ENV DB_PATH=/app/data/todos.db
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD ["curl", "-fsS", "-m", "5", "http://127.0.0.1:3000/"]
+
+# Declare volumes for data persistence
+# This helps Docker/Portainer recognize these as mount points
+VOLUME ["/app/data", "/app/uploads"]
 
 # Run the app
 CMD ["/app/entrypoint.sh"]
