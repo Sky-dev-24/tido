@@ -13,7 +13,7 @@ services:
       - NODE_ENV=production
       - PORT=3000
       # Security: WebSocket CORS origin (CRITICAL - set to your domain)
-      - ORIGIN=${ORIGIN:-false}
+      - ORIGIN=${ORIGIN:-}
       # Cookie security - set to 'false' for HTTP access
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
       # Email configuration (optional - for password reset and verification)
@@ -32,7 +32,7 @@ services:
     networks:
       - tido-network
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/login', (r) => process.exit(r.statusCode >= 200 && r.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3

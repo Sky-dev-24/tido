@@ -7,6 +7,8 @@ export const connectionState = writable('disconnected');
 
 let socket = null;
 let currentListId = null;
+let currentUserId = null;
+let currentUsername = null;
 
 // Initialize WebSocket connection
 export function initializeWebSocket() {
@@ -27,9 +29,13 @@ export function initializeWebSocket() {
 		connectionState.set('connected');
 
 		// Rejoin current list if we were in one
-		if (currentListId) {
+		if (currentListId && currentUserId && currentUsername) {
 			console.log('[WebSocket] Rejoining list after reconnect:', currentListId);
-			socket.emit('join-list', currentListId);
+			socket.emit('join-list', {
+				listId: currentListId,
+				userId: currentUserId,
+				username: currentUsername
+			});
 		}
 	});
 
@@ -65,6 +71,8 @@ export function joinList(listId, userId, username) {
 	}
 
 	currentListId = listId;
+	currentUserId = userId;
+	currentUsername = username;
 
 	const joinData = { listId, userId, username };
 
@@ -130,6 +138,8 @@ export function disconnectWebSocket() {
 		socket.disconnect();
 		socket = null;
 		currentListId = null;
+		currentUserId = null;
+		currentUsername = null;
 		connectionState.set('disconnected');
 	}
 }
