@@ -1843,15 +1843,6 @@ export function updateUserPassword(userId, newPassword) {
 }
 
 /**
- * Get user by email
- * @param {string} email - Email address
- * @returns {Object|null} User object or null
- */
-export function getUserByEmail(email) {
-  return db.prepare('SELECT * FROM users WHERE email = ?').get(email);
-}
-
-/**
  * Clean up expired password reset tokens
  */
 export function cleanupExpiredPasswordResetTokens() {
