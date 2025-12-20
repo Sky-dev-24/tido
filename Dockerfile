@@ -41,6 +41,9 @@ COPY --from=builder /app/server.js ./server.js
 # Copy source lib directory for database module
 COPY --from=builder /app/src/lib ./src/lib
 
+# Ensure app files are readable by non-root runtime user (e.g., PUID 99 on Unraid)
+RUN chmod -R a+rX /app
+
 # Create directories for data persistence
 RUN mkdir -p /app/data /app/uploads
 
