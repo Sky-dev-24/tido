@@ -14,9 +14,19 @@ export function initializeWebSocket(server) {
 		return existingIO;
 	}
 
+	// Parse WEBSOCKET_ORIGINS (or fall back to ORIGIN) - can be comma-separated for multiple allowed origins
+	// e.g., "https://tido.example.com,http://192.168.1.100:3000"
+	// WEBSOCKET_ORIGINS is set by server.js to preserve the full origin list before SvelteKit normalizes ORIGIN
+	let corsOrigin = false;
+	const originEnv = process.env.WEBSOCKET_ORIGINS || process.env.ORIGIN;
+	if (originEnv) {
+		const origins = originEnv.split(',').map(o => o.trim()).filter(Boolean);
+		corsOrigin = origins.length === 1 ? origins[0] : origins;
+	}
+
 	const io = new Server(server, {
 		cors: {
-			origin: process.env.ORIGIN || false,
+			origin: corsOrigin,
 			methods: ['GET', 'POST'],
 			credentials: true
 		},

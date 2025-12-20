@@ -1,4 +1,16 @@
 import { createServer } from 'http';
+
+// Normalize ORIGIN for SvelteKit before importing the handler
+// SvelteKit expects a single origin, but we support comma-separated for WebSocket CORS
+// Store the full list for WebSocket CORS, give SvelteKit just the first one
+const originalOrigin = process.env.ORIGIN;
+if (process.env.ORIGIN && process.env.ORIGIN.includes(',')) {
+	const origins = process.env.ORIGIN.split(',').map(o => o.trim());
+	process.env.ORIGIN = origins[0]; // SvelteKit gets the primary origin
+}
+// Store full origin list for WebSocket CORS
+process.env.WEBSOCKET_ORIGINS = originalOrigin;
+
 import { handler } from './build/handler.js';
 import { initializeWebSocket } from './src/lib/websocket.server.js';
 
