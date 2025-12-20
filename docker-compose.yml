@@ -28,9 +28,8 @@ services:
       # Unraid compatibility - allow override via Portainer
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+    network_mode: bridge
     restart: unless-stopped
-    networks:
-      - tido-network
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/login', (r) => process.exit(r.statusCode >= 200 && r.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 30s
@@ -44,6 +43,3 @@ volumes:
   tido-uploads:
     driver: local
 
-networks:
-  tido-network:
-    driver: bridge
