@@ -1833,8 +1833,8 @@ export function markPasswordResetTokenUsed(token) {
  * @param {number} userId - User ID
  * @param {string} newPassword - New plain text password
  */
-export function updateUserPassword(userId, newPassword) {
-  const hashedPassword = bcrypt.hashSync(newPassword, 10);
+export async function updateUserPassword(userId, newPassword) {
+  const hashedPassword = await bcrypt.hash(newPassword, 10);
   db.prepare(`
     UPDATE users
     SET password_hash = ?

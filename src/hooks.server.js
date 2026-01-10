@@ -5,6 +5,7 @@ import {
   cleanupExpiredEmailVerificationTokens
 } from '$lib/db.js';
 import { createLogger } from '$lib/logger.js';
+import { ensureCsrfToken } from '$lib/csrf.js';
 
 const logger = createLogger('Server');
 
@@ -73,6 +74,9 @@ export async function handle({ event, resolve }) {
         auto_archive_days: session.auto_archive_days,
         week_start_day: session.week_start_day
       };
+
+      // Ensure CSRF token exists for authenticated users
+      ensureCsrfToken(event.cookies);
     } else {
       // Session expired, invalid, or user not approved - clear cookie
       event.cookies.delete('session', { path: '/' });

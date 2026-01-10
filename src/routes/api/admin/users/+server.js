@@ -9,6 +9,7 @@ import {
 	getUser,
 	getAdminCount
 } from '$lib/db.js';
+import { requireCsrfToken } from '$lib/csrf.js';
 
 export async function GET({ locals }) {
   if (!locals.user || !locals.user.is_admin) {
@@ -26,10 +27,16 @@ export async function GET({ locals }) {
 	return json({ pendingUsers, registeredUsers, superAdminId });
 }
 
-export async function POST({ request, locals }) {
+export async function POST({ request, locals, cookies }) {
   if (!locals.user || !locals.user.is_admin) {
     return json({ error: 'Unauthorized' }, { status: 403 });
   }
+
+	// Validate CSRF token
+	const csrfError = requireCsrfToken({ request, cookies });
+	if (csrfError) {
+		return json(csrfError, { status: 403 });
+	}
 
 	const { userId, action, makeAdmin } = await request.json();
 

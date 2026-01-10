@@ -11,6 +11,7 @@ import {
 } from '$lib/db.js';
 import { validateListName, sanitizeText } from '$lib/validation.js';
 import { createLogger } from '$lib/logger.js';
+import { requireCsrfToken } from '$lib/csrf.js';
 
 const logger = createLogger('ListsAPI');
 
@@ -31,9 +32,15 @@ export async function GET({ locals, url }) {
 }
 
 // POST - Create a new list
-export async function POST({ request, locals }) {
+export async function POST({ request, locals, cookies }) {
 	if (!locals.user) {
 		return json({ error: 'Unauthorized' }, { status: 401 });
+	}
+
+	// Validate CSRF token
+	const csrfError = requireCsrfToken({ request, cookies });
+	if (csrfError) {
+		return json(csrfError, { status: 403 });
 	}
 
 	try {
@@ -60,9 +67,15 @@ export async function POST({ request, locals }) {
 }
 
 // PATCH - Update a list or restore from archive
-export async function PATCH({ request, locals }) {
+export async function PATCH({ request, locals, cookies }) {
 	if (!locals.user) {
 		return json({ error: 'Unauthorized' }, { status: 401 });
+	}
+
+	// Validate CSRF token
+	const csrfError = requireCsrfToken({ request, cookies });
+	if (csrfError) {
+		return json(csrfError, { status: 403 });
 	}
 
 	try {
@@ -108,9 +121,15 @@ export async function PATCH({ request, locals }) {
 }
 
 // DELETE - Permanently delete an archived list
-export async function DELETE({ request, locals }) {
+export async function DELETE({ request, locals, cookies }) {
 	if (!locals.user) {
 		return json({ error: 'Unauthorized' }, { status: 401 });
+	}
+
+	// Validate CSRF token
+	const csrfError = requireCsrfToken({ request, cookies });
+	if (csrfError) {
+		return json(csrfError, { status: 403 });
 	}
 
 	try {

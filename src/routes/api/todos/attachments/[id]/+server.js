@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { getAttachmentForUser, deleteTaskAttachment } from '$lib/db.js';
+import { requireCsrfToken } from '$lib/csrf.js';
 import { join } from 'path';
 import { readFile, unlink } from 'fs/promises';
 
@@ -55,9 +56,15 @@ export async function GET({ params, locals }) {
   }
 }
 
-export async function DELETE({ params, locals }) {
+export async function DELETE({ params, request, locals, cookies }) {
   if (!locals.user) {
     return json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Validate CSRF token
+  const csrfError = requireCsrfToken({ request, cookies });
+  if (csrfError) {
+    return json(csrfError, { status: 403 });
   }
 
   const id = Number.parseInt(params.id, 10);

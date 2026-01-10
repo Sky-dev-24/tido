@@ -6,8 +6,13 @@
 // Store: Map<identifier, Array<timestamp>>
 const requestStore = new Map();
 
-// Cleanup old entries every 5 minutes
-setInterval(() => {
+// Track cleanup interval for proper lifecycle management
+let cleanupInterval = null;
+
+/**
+ * Perform cleanup of old entries from the rate limit store
+ */
+function performCleanup() {
 	const now = Date.now();
 	for (const [key, timestamps] of requestStore.entries()) {
 		// Remove timestamps older than 1 hour
@@ -18,7 +23,35 @@ setInterval(() => {
 			requestStore.set(key, filtered);
 		}
 	}
-}, 300000);
+}
+
+/**
+ * Start the cleanup interval (called automatically on module load)
+ */
+export function startCleanup() {
+	if (cleanupInterval) return;
+	cleanupInterval = setInterval(performCleanup, 300000); // Every 5 minutes
+}
+
+/**
+ * Stop the cleanup interval (useful for testing or graceful shutdown)
+ */
+export function stopCleanup() {
+	if (cleanupInterval) {
+		clearInterval(cleanupInterval);
+		cleanupInterval = null;
+	}
+}
+
+/**
+ * Clear all rate limit data (useful for testing)
+ */
+export function clearRateLimitStore() {
+	requestStore.clear();
+}
+
+// Start cleanup on module load
+startCleanup();
 
 /**
  * Rate limit configuration presets

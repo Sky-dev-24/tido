@@ -2,15 +2,22 @@ import { json } from '@sveltejs/kit';
 import { updateComment, deleteComment } from '$lib/db.js';
 import { sanitizeText } from '$lib/validation.js';
 import { createLogger } from '$lib/logger.js';
+import { requireCsrfToken } from '$lib/csrf.js';
 
 const logger = createLogger('CommentsAPI');
 
 // PATCH - Update a comment
-export async function PATCH({ params, request, locals }) {
+export async function PATCH({ params, request, locals, cookies }) {
 	const { user } = locals;
 
 	if (!user) {
 		return json({ error: 'Unauthorized' }, { status: 401 });
+	}
+
+	// Validate CSRF token
+	const csrfError = requireCsrfToken({ request, cookies });
+	if (csrfError) {
+		return json(csrfError, { status: 403 });
 	}
 
 	try {
@@ -41,11 +48,17 @@ export async function PATCH({ params, request, locals }) {
 }
 
 // DELETE - Delete a comment
-export async function DELETE({ params, locals }) {
+export async function DELETE({ params, request, locals, cookies }) {
 	const { user } = locals;
 
 	if (!user) {
 		return json({ error: 'Unauthorized' }, { status: 401 });
+	}
+
+	// Validate CSRF token
+	const csrfError = requireCsrfToken({ request, cookies });
+	if (csrfError) {
+		return json(csrfError, { status: 403 });
 	}
 
 	try {

@@ -1,10 +1,17 @@
 import { json } from '@sveltejs/kit';
 import { moveTodoToList } from '$lib/db.js';
 import { emitTodoCreate, emitTodoDelete, emitTodoUpdate } from '$lib/websocket.server.js';
+import { requireCsrfToken } from '$lib/csrf.js';
 
-export async function POST({ request, locals }) {
+export async function POST({ request, locals, cookies }) {
 	if (!locals.user) {
 		return json({ error: 'Unauthorized' }, { status: 401 });
+	}
+
+	// Validate CSRF token
+	const csrfError = requireCsrfToken({ request, cookies });
+	if (csrfError) {
+		return json(csrfError, { status: 403 });
 	}
 
 	const payload = await request.json();

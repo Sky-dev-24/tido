@@ -6,6 +6,7 @@ import {
 	rejectInvitation,
 	removeMember
 } from '$lib/db.js';
+import { requireCsrfToken } from '$lib/csrf.js';
 
 // GET - Fetch all pending invitations for the authenticated user
 export async function GET({ locals }) {
@@ -23,9 +24,15 @@ export async function GET({ locals }) {
 }
 
 // POST - Create a new invitation or accept/reject an existing invitation
-export async function POST({ request, locals }) {
+export async function POST({ request, locals, cookies }) {
 	if (!locals.user) {
 		return json({ error: 'Unauthorized' }, { status: 401 });
+	}
+
+	// Validate CSRF token
+	const csrfError = requireCsrfToken({ request, cookies });
+	if (csrfError) {
+		return json(csrfError, { status: 403 });
 	}
 
 	try {
@@ -88,9 +95,15 @@ export async function POST({ request, locals }) {
 }
 
 // DELETE - Remove a member from a list
-export async function DELETE({ request, locals }) {
+export async function DELETE({ request, locals, cookies }) {
 	if (!locals.user) {
 		return json({ error: 'Unauthorized' }, { status: 401 });
+	}
+
+	// Validate CSRF token
+	const csrfError = requireCsrfToken({ request, cookies });
+	if (csrfError) {
+		return json(csrfError, { status: 403 });
 	}
 
 	try {

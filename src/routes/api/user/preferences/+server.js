@@ -6,10 +6,17 @@ import {
   updateUserViewDensity,
   updateUserPreferences
 } from '$lib/db.js';
+import { requireCsrfToken } from '$lib/csrf.js';
 
-export async function PATCH({ request, locals }) {
+export async function PATCH({ request, locals, cookies }) {
   if (!locals.user) {
     return json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Validate CSRF token
+  const csrfError = requireCsrfToken({ request, cookies });
+  if (csrfError) {
+    return json(csrfError, { status: 403 });
   }
 
   const data = await request.json();

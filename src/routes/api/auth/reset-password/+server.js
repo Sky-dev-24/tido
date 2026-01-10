@@ -47,7 +47,7 @@ export async function POST({ request, getClientAddress, setHeaders }) {
 		}
 
 		// Update user's password
-		updateUserPassword(tokenData.user_id, password);
+		await updateUserPassword(tokenData.user_id, password);
 
 		// Mark token as used
 		markPasswordResetTokenUsed(token);

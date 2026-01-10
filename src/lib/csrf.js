@@ -19,13 +19,14 @@ export function generateCsrfToken() {
 
 /**
  * Set CSRF token in cookie
+ * Note: httpOnly is false so JavaScript can read the token for the double-submit pattern
  * @param {Object} cookies - SvelteKit cookies object
  * @param {string} token - CSRF token
  */
 export function setCsrfCookie(cookies, token) {
 	cookies.set(CSRF_COOKIE_NAME, token, {
 		path: '/',
-		httpOnly: true,
+		httpOnly: false, // Must be false for double-submit cookie pattern
 		sameSite: 'strict',
 		secure: process.env.COOKIE_SECURE !== 'false' && process.env.NODE_ENV === 'production',
 		maxAge: 60 * 60 * 24 * 7 // 7 days (same as session)

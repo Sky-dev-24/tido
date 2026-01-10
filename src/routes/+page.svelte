@@ -1655,8 +1655,8 @@ $effect(() => {
 
 	// Join/leave list rooms when currentList changes
 	$effect(() => {
-		if (browser && currentList && data.user) {
-			joinList(currentList.id, data.user.id, data.user.username);
+		if (browser && currentList && data.sessionId) {
+			joinList(currentList.id, data.sessionId);
 		}
 	});
 

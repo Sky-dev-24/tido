@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import { createComment, getCommentsForTodo } from '$lib/db.js';
 import { sanitizeText } from '$lib/validation.js';
 import { createLogger } from '$lib/logger.js';
+import { requireCsrfToken } from '$lib/csrf.js';
 
 const logger = createLogger('CommentsAPI');
 
@@ -29,11 +30,17 @@ export async function GET({ url, locals }) {
 }
 
 // POST - Create a new comment
-export async function POST({ request, locals }) {
+export async function POST({ request, locals, cookies }) {
 	const { user } = locals;
 
 	if (!user) {
 		return json({ error: 'Unauthorized' }, { status: 401 });
+	}
+
+	// Validate CSRF token
+	const csrfError = requireCsrfToken({ request, cookies });
+	if (csrfError) {
+		return json(csrfError, { status: 403 });
 	}
 
 	try {

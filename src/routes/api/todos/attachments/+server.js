@@ -2,6 +2,8 @@ import { json } from '@sveltejs/kit';
 import { createTaskAttachment } from '$lib/db.js';
 import { validateFileUpload, getExtensionFromMimeType } from '$lib/file-validation.js';
 import { createLogger } from '$lib/logger.js';
+import { requireCsrfToken } from '$lib/csrf.js';
+import { applyRateLimit } from '$lib/rate-limit.js';
 import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { writeFile, unlink } from 'fs/promises';
@@ -9,6 +11,13 @@ import crypto from 'crypto';
 
 const logger = createLogger('FileUpload');
 const UPLOAD_DIR = join(process.cwd(), 'uploads');
+
+// Custom rate limit for file uploads (stricter than standard API)
+const UPLOAD_RATE_LIMIT = {
+  maxRequests: 10,      // 10 uploads per minute
+  windowMs: 60000,
+  message: 'Too many file uploads. Please wait before uploading more files.'
+};
 
 function ensureUploadDir() {
   if (!existsSync(UPLOAD_DIR)) {
@@ -28,9 +37,27 @@ function buildSanitizedAttachment(row) {
   };
 }
 
-export async function POST({ request, locals }) {
+export async function POST({ request, locals, cookies, getClientAddress, setHeaders }) {
   if (!locals.user) {
     return json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Apply rate limiting for file uploads
+  const rateLimitResult = applyRateLimit(
+    { request, getClientAddress, setHeaders },
+    UPLOAD_RATE_LIMIT
+  );
+  if (rateLimitResult) {
+    return json(rateLimitResult, {
+      status: 429,
+      headers: { 'Retry-After': rateLimitResult.retryAfter?.toString() || '60' }
+    });
+  }
+
+  // Validate CSRF token
+  const csrfError = requireCsrfToken({ request, cookies });
+  if (csrfError) {
+    return json(csrfError, { status: 403 });
   }
 
   const formData = await request.formData();
