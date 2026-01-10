@@ -17,6 +17,8 @@ import { initializeWebSocket } from './src/lib/websocket.server.js';
 // Wrapper to normalize absolute or scheme-relative URIs in request URLs
 // Some reverse proxies send full URLs like "http://host:port/path" or "//host:port/path"
 function normalizedHandler(req, res) {
+	const originalUrl = req.url;
+
 	// Check if the URL starts with http://, https://, or // (absolute or scheme-relative URI)
 	if (
 		req.url &&
@@ -25,11 +27,15 @@ function normalizedHandler(req, res) {
 		try {
 			const parsed = new URL(req.url.startsWith('//') ? `http:${req.url}` : req.url);
 			req.url = parsed.pathname + parsed.search;
+			console.log(`[URL Normalized] ${originalUrl} -> ${req.url}`);
 		} catch (e) {
 			// If parsing fails, try to extract path after the host:port
 			const match = req.url.match(/^(?:https?:)?\/\/[^/]+(\/.*)?$/);
 			if (match) {
 				req.url = match[1] || '/';
+				console.log(`[URL Normalized via regex] ${originalUrl} -> ${req.url}`);
+			} else {
+				console.log(`[URL Normalization failed] ${originalUrl}`);
 			}
 		}
 	}
