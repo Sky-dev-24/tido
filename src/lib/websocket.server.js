@@ -1,54 +1,7 @@
 import { Server } from 'socket.io';
 import { createLogger } from './logger.js';
-import Database from 'better-sqlite3';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const dbPath = process.env.DB_PATH || join(__dirname, '../../todos.db');
 
 const logger = createLogger('WebSocket');
-
-// Helper to verify list membership (uses separate db connection to avoid import cycles)
-function isUserMemberOfList(listId, userId) {
-	try {
-		const db = new Database(dbPath, { readonly: true });
-		const member = db.prepare(
-			'SELECT 1 FROM list_members WHERE list_id = ? AND user_id = ?'
-		).get(listId, userId);
-		db.close();
-		return Boolean(member);
-	} catch (error) {
-		logger.error('Error checking list membership', error);
-		return false;
-	}
-}
-
-// Helper to validate session and get user info
-function getSessionUser(sessionId) {
-	try {
-		const db = new Database(dbPath, { readonly: true });
-		const session = db.prepare(`
-			SELECT s.*, u.username, u.is_approved
-			FROM sessions s
-			JOIN users u ON s.user_id = u.id
-			WHERE s.id = ? AND s.expires_at > datetime('now')
-		`).get(sessionId);
-		db.close();
-
-		if (session && session.is_approved) {
-			return {
-				userId: session.user_id,
-				username: session.username
-			};
-		}
-		return null;
-	} catch (error) {
-		logger.error('Error validating session', error);
-		return null;
-	}
-}
 
 // Use globalThis to share the WebSocket instance across all contexts (Vite dev server + SSR)
 const getGlobalIO = () => globalThis.__socketIO;
@@ -83,48 +36,17 @@ export function initializeWebSocket(server) {
 	io.on('connection', (socket) => {
 		logger.debug('Client connected', { socketId: socket.id });
 
-		// Handle user joining a list room - WITH AUTHORIZATION
+		// Handle user joining a list room
 		socket.on('join-list', (data) => {
-			const { listId, sessionId } = data;
-
-			// Validate required fields
-			if (!listId || !sessionId) {
-				socket.emit('error', { message: 'Missing required fields' });
-				return;
-			}
-
-			// Validate session and get user info
-			const sessionUser = getSessionUser(sessionId);
-			if (!sessionUser) {
-				socket.emit('error', { message: 'Invalid or expired session' });
-				return;
-			}
-
-			// Verify list membership
-			if (!isUserMemberOfList(listId, sessionUser.userId)) {
-				socket.emit('error', { message: 'Access denied to this list' });
-				logger.security('Unauthorized list join attempt', {
-					userId: sessionUser.userId,
-					username: sessionUser.username,
-					listId,
-					socketId: socket.id
-				});
-				return;
-			}
-
-			// Authorization passed - join the room
+			const { listId, userId, username } = data;
 			socket.join(`list-${listId}`);
-			socket.userId = sessionUser.userId;
-			socket.username = sessionUser.username;
+			socket.userId = userId;
+			socket.username = username;
 			socket.currentListId = listId;
-			logger.debug('User joined list', { socketId: socket.id, username: sessionUser.username, listId });
+			logger.debug('User joined list', { socketId: socket.id, username, listId });
 
 			// Notify others that user joined
-			socket.to(`list-${listId}`).emit('user:joined', {
-				userId: sessionUser.userId,
-				username: sessionUser.username,
-				socketId: socket.id
-			});
+			socket.to(`list-${listId}`).emit('user:joined', { userId, username, socketId: socket.id });
 		});
 
 		// Handle user leaving a list room

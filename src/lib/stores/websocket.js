@@ -7,7 +7,8 @@ export const connectionState = writable('disconnected');
 
 let socket = null;
 let currentListId = null;
-let currentSessionId = null;
+let currentUserId = null;
+let currentUsername = null;
 
 // Initialize WebSocket connection
 export function initializeWebSocket() {
@@ -28,11 +29,12 @@ export function initializeWebSocket() {
 		connectionState.set('connected');
 
 		// Rejoin current list if we were in one
-		if (currentListId && currentSessionId) {
+		if (currentListId && currentUserId && currentUsername) {
 			console.log('[WebSocket] Rejoining list after reconnect:', currentListId);
 			socket.emit('join-list', {
 				listId: currentListId,
-				sessionId: currentSessionId
+				userId: currentUserId,
+				username: currentUsername
 			});
 		}
 	});
@@ -50,15 +52,15 @@ export function initializeWebSocket() {
 	return socket;
 }
 
-// Join a list room (requires sessionId for server-side authorization)
-export function joinList(listId, sessionId) {
+// Join a list room
+export function joinList(listId, userId, username) {
 	if (!socket) {
 		console.log('[WebSocket] Cannot join list - socket not initialized');
 		return;
 	}
 
-	if (!listId || !sessionId) {
-		console.log('[WebSocket] Cannot join list - missing listId or sessionId');
+	if (!listId) {
+		console.log('[WebSocket] Cannot join list - no listId provided');
 		return;
 	}
 
@@ -69,9 +71,10 @@ export function joinList(listId, sessionId) {
 	}
 
 	currentListId = listId;
-	currentSessionId = sessionId;
+	currentUserId = userId;
+	currentUsername = username;
 
-	const joinData = { listId, sessionId };
+	const joinData = { listId, userId, username };
 
 	// If socket is connected, join immediately
 	if (socket.connected) {
@@ -135,7 +138,8 @@ export function disconnectWebSocket() {
 		socket.disconnect();
 		socket = null;
 		currentListId = null;
-		currentSessionId = null;
+		currentUserId = null;
+		currentUsername = null;
 		connectionState.set('disconnected');
 	}
 }
